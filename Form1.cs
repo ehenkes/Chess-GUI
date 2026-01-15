@@ -1552,6 +1552,7 @@ namespace chessGUI
             await ApplyEngineOptionsAsync().ConfigureAwait(false);
 
             AppendAnalysisLine("[GUI] Engine bereit.");
+            UI(() => _board.SetBestMoveArrow(null, null));
             _uiUnlocked = true;
             ApplyUiLockState();
             UpdateNavButtons();
@@ -1713,11 +1714,15 @@ namespace chessGUI
                         var first = parsed.Pv.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                         if (first.Length > 0 && first[0].Length >= 4)
                         {
-                            string mv = first[0];
-                            string from = mv.Substring(0, 2);
-                            string to = mv.Substring(2, 2);
+                            // Pfeil NUR bei laufender Analyse (Legalitätscheck soll keinen Pfeil setzen)
+                            if (_analysisCts != null && !_analysisCts.IsCancellationRequested)
+                            {
+                                string mv = first[0];
+                                string from = mv.Substring(0, 2);
+                                string to = mv.Substring(2, 2);
 
-                            UI(() => _board.SetBestMoveArrow(from, to));
+                                UI(() => _board.SetBestMoveArrow(from, to));
+                            }
                         }
                     }
                 }
