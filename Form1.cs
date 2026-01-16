@@ -55,7 +55,7 @@ namespace chessGUI
 
         private bool _suppressMovesSelectionChanged = false;
 
-        private readonly List<string> _moveHistory = new List<string>(); // UCI-Moves, Länge = _fenHistory.Count - 1
+        private readonly List<string> _moveHistory = new List<string>(); // UCI moves, length = _fenHistory.Count - 1
         private readonly ListBox _moves = new ListBox();
 
         private UciEngine? _engine;
@@ -108,13 +108,13 @@ namespace chessGUI
 
         private bool _boardFlipped = false;
 
-        // Klick in Move-Liste: Weiß/Schwarz unterscheiden
+        // Click in Move list: Distinguish between white and black
         private bool _movesClickOverride = false;
         private int _movesClickHistoryIndex = 0;
 
-        private bool _uiUnlocked = false; // alles außer Engine-Button gesperrt, bis Engine wirklich bereit ist
+        private bool _uiUnlocked = false; // Everything except the engine button is locked until the engine is truly ready.
 
-        // Serialisiert ALLE UCI-Sequenzen, verhindert "bestmove"-Rennen.
+        // Serializes ALL UCI sequences, prevents “best move” races.
         private readonly SemaphoreSlim _engineOpLock = new SemaphoreSlim(1, 1);
 
         private async void FlipBoard()
@@ -235,8 +235,8 @@ namespace chessGUI
 
             _board.DragStarted += async (_, __) =>
             {
-                _suppressEngineUi = true;          // UI-Updates von Engine aus
-                await StopAnalysisImmediatelyAsync(); // Analyse wirklich stoppen
+                _suppressEngineUi = true;          // UI updates from Engine
+                await StopAnalysisImmediatelyAsync(); // Really stop analysis
             };
 
             _board.DragEnded += (_, __) =>
@@ -346,7 +346,7 @@ namespace chessGUI
             _boardHost.Controls.Add(_board);
             _boardHost.Controls.Add(_zoom);
 
-            // Move-Liste (unten)
+            // Move list (below)
             _moves.Dock = DockStyle.Fill;
             _moves.Font = new Font("Consolas", 11f, FontStyle.Bold);
             _moves.BackColor = Color.FromArgb(16, 16, 16);
@@ -365,9 +365,9 @@ namespace chessGUI
                 int blackPly = whitePly + 1;
                 int blackHistoryIndex = whiteHistoryIndex + 1;
 
-                // Split-Position (Pixel): bis inkl. Weißzug + Space messen (Consolas => stabil)
+                // Split position (pixels): measure up to and including white space + space bar (Consolas => stable)
                 string w = (whitePly >= 0 && whitePly < _moveHistory.Count) ? _moveHistory[whitePly] : "";
-                string prefix = $"{(row + 1),2}. {w,-6} "; // entspricht RefreshMovesUI-Format
+                string prefix = $"{(row + 1),2}. {w,-6} "; // corresponds to RefreshMovesUI format
                 int splitX = TextRenderer.MeasureText(prefix, _moves.Font, new Size(int.MaxValue, int.MaxValue),
                     TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width;
 
@@ -397,7 +397,7 @@ namespace chessGUI
                 }
                 else
                 {
-                    // Fallback (z.B. Tastatur): gehe auf Ende der Zeile (Schwarz, wenn vorhanden, sonst Weiß)
+                    // Fallback (e.g., keyboard): go to the end of the line (black, if available, otherwise white)
                     int row = _moves.SelectedIndex;
                     int whiteHistoryIndex = row * 2 + 1;
                     int blackHistoryIndex = whiteHistoryIndex + 1;
@@ -420,7 +420,7 @@ namespace chessGUI
                 await Task.CompletedTask;
             };
 
-            // Split: oben Analyse, unten Moves
+            // Split: analysis above, moves below
             var rightSplit = new SplitContainer
             {
                 Dock = DockStyle.Fill,
@@ -440,8 +440,8 @@ namespace chessGUI
             Controls.Add(right);
             Controls.Add(_boardHost);
 
-            // Buttons besser lesbar
-            var btnText = Color.Gold;      // alternativ: Color.White
+            // Buttons easier to read
+            var btnText = Color.Gold;      
             var btnBack = Color.FromArgb(40, 40, 40);
 
             foreach (Control c in topRow.Controls)
@@ -477,7 +477,7 @@ namespace chessGUI
 
             _board.UciMoveDropped += async (_, uciMove) =>
             {
-                // Promotion? -> Dialog, dann 5-stelligen UCI bauen
+                // Promotion? -> Dialog, then build 5-digit UCI
                 string moveToSend = uciMove;
 
                 if (TryGetPromotionContext(_pos.ToFen(), uciMove, out bool isWhitePawn))
@@ -490,7 +490,7 @@ namespace chessGUI
                         return;
                     }
 
-                    // UCI: immer kleines Zeichen q/r/b/n
+                    // UCI: always lowercase q/r/b/n
                     moveToSend = uciMove + char.ToLowerInvariant(dlg.SelectedPromo);
                 }
 
@@ -498,7 +498,7 @@ namespace chessGUI
                 if (!ok)
                 {
                     _board.ClearDropPreview();
-                    AppendAnalysisLine($"[GUI] illegal/abgelehnt: {moveToSend}");
+                    AppendAnalysisLine($"[GUI] illegal/rejected: {moveToSend}");
                     BeepIllegalMove();
                 }
             };
@@ -521,7 +521,7 @@ namespace chessGUI
             char piece = GetPieceAtSquareFromFen(fen, from);
             if (piece != 'P' && piece != 'p') return false;
 
-            // Zielreihe 8/1?
+            // target rank 8/1?
             char toRank = to[1];
             if (piece == 'P' && toRank != '8') return false;
             if (piece == 'p' && toRank != '1') return false;
@@ -539,7 +539,7 @@ namespace chessGUI
                 int rank = sq[1] - '0';
                 if (f < 0 || f > 7 || rank < 1 || rank > 8) return '\0';
 
-                int r = 8 - rank; // r=0 ist Rank 8
+                int r = 8 - rank; // r=0 is rank 8
 
                 var placement = fen.Split(' ')[0];
                 var ranks = placement.Split('/');
@@ -637,19 +637,19 @@ namespace chessGUI
             if (IsDisposed) return;
             if (InvokeRequired) { BeginInvoke(new Action(ApplyUiLockState)); return; }
 
-            // Engine Start immer erlauben
+            // Always allow engine start
             if (_btnStart != null) _btnStart.Enabled = true;
 
-            // Optional: Engine auswählen erlauben
+            // Optional: Allow engine selection
             if (_btnSelectEngine != null) _btnSelectEngine.Enabled = true;
 
             bool on = _uiUnlocked;
             bool analysisRunning = _analysisCts != null;
 
-            // Analyse nur, wenn UI freigeschaltet UND gerade keine Analyse läuft
+            // Analysis only if UI is activated AND no analysis is currently running
             if (_btnAnalyse != null) _btnAnalyse.Enabled = on && !analysisRunning;
 
-            // Stop nur, wenn Analyse läuft (Gegenspieler zu Analyse)
+            // Stop only when analysis is running (opponent to analysis)
             if (_btnStop != null) _btnStop.Enabled = analysisRunning;
 
             if (_btnNewGame != null) _btnNewGame.Enabled = on;
@@ -661,13 +661,6 @@ namespace chessGUI
 
             if (_moves != null) _moves.Enabled = on;
             if (_board != null) _board.Enabled = on;
-
-            /*
-            if (_btnFirst != null) _btnFirst.Enabled = on;
-            if (_btnBack != null) _btnBack.Enabled = on;
-            if (_btnForward != null) _btnForward.Enabled = on;
-            if (_btnLast != null) _btnLast.Enabled = on;
-            */
 
             if (!on)
             {
@@ -711,15 +704,28 @@ namespace chessGUI
         {
             if (_engine == null) return;
 
-            await _engine.SendAsync("setoption name Threads value 7").ConfigureAwait(false);
-            await _engine.SendAsync("setoption name MultiPV value 3").ConfigureAwait(false);
-            await _engine.SendAsync("setoption name Hash value 1600").ConfigureAwait(false);
+            await _engineOpLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                // Important: if a search is still running (analysis), stop it cleanly first,
+                // otherwise “readyok” may be lost/arrive too late
+                await StopSearchAndWaitBestmoveAsync(200, 500).ConfigureAwait(false);
 
-            await _engine.SendAsync("isready").ConfigureAwait(false);
-            await _engine.WaitForAsync("readyok", TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+                await _engine.SendAsync("setoption name Threads value 7").ConfigureAwait(false);
+                await _engine.SendAsync("setoption name MultiPV value 3").ConfigureAwait(false);
+                await _engine.SendAsync("setoption name Hash value 1600").ConfigureAwait(false);
 
-            AppendAnalysisLine("[GUI] Engine Optionen: Threads=7, MultiPV=3, Hash=1600");
+                await _engine.SendAsync("isready").ConfigureAwait(false);
+                await _engine.WaitForAsync("readyok", TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+
+                AppendAnalysisLine("[GUI] Engine Optionen: Threads=7, MultiPV=3, Hash=1600");
+            }
+            finally
+            {
+                _engineOpLock.Release();
+            }
         }
+
 
         private static string UciToSanOrUciFallback(string prevFen, string uciMove)
         {
@@ -731,23 +737,23 @@ namespace chessGUI
                 string from = uciMove.Substring(0, 2);
                 string to = uciMove.Substring(2, 2);
 
-                // Gera.Chess kann aus FEN laden und Move-Objekte ausführen. :contentReference[oaicite:2]{index=2}
+                // Gera.Chess can load from FEN and execute move objects. :contentReference[oaicite:2]{index=2}
                 var b = ChessBoard.LoadFromFen(prevFen);
 
-                // Promotion (uci.Length==5) lassen wir erstmal als Fallback laufen,
-                // bis wir es sauber über eine passende Move-Overload abbilden.
+                // We'll run Promotion (uci.Length==5) as a fallback for now.
+                // until we map it cleanly using a suitable move overload.
                 if (uciMove.Length == 5)
                     return uciMove;
 
                 b.Move(new Move(from, to));
 
-                // SAN aus PGN holen: letztes Zug-Token extrahieren
+                // Get SAN from PGN: extract last move token
                 string pgn = b.ToPgn();
 
-                // Ergebnis entfernen
+                // Remove result
                 pgn = Regex.Replace(pgn, @"\b(1-0|0-1|1/2-1/2|\*)\b", " ").Trim();
 
-                // Tokenize und letztes "Move"-Token nehmen
+                // Tokenize and take last "Move"-Token
                 var tokens = pgn.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
                 string last = "";
@@ -755,7 +761,7 @@ namespace chessGUI
                 {
                     string t = tokens[i];
 
-                    // Skip Move-Nummern wie "12." oder "12..."
+                    // Skip move numbers such as “12.” or “12...”
                     if (Regex.IsMatch(t, @"^\d+\.(\.\.)?$")) continue;
 
                     last = t;
@@ -791,9 +797,9 @@ namespace chessGUI
             cfg.EngineExePath = _engineExePath;
             cfg.Save();
 
-            AppendAnalysisLine($"[GUI] Engine gesetzt: {_engineExePath}");
+            AppendAnalysisLine($"[GUI] Engine set: {_engineExePath}");
 
-            // Optional: falls Engine gerade läuft -> sauber neu starten
+            // Optional: if engine is currently running -> restart cleanly
             if (_engine != null)
             {
                 await StopAnalysisAndEngineAsync().ConfigureAwait(false);
@@ -829,8 +835,8 @@ namespace chessGUI
                     await _engine.SendAsync("stop").ConfigureAwait(false);
                     LogTiming("StopSearch: SendAsync(stop)", t);
                 }
-                
-                // Optional: kurz auf bestmove-ack warten. Bei <= 0 wird übersprungen.
+
+                // Optional: wait briefly for bestmove-ack. If <= 0, skip.
                 if (bestmoveTimeoutMs > 0)
                 {
                     try
@@ -852,7 +858,7 @@ namespace chessGUI
 
 
 
-                // Danach Engine sicher in Idle bringen (kurz)
+                // Then bring the engine safely to idle (briefly).
                 try
                 {
                     var t = NowTicks();
@@ -889,10 +895,16 @@ namespace chessGUI
         {
             StopAutoplay();
 
+            bool wasAnalysisRunning = (_analysisCts != null);
+
+            // Stop analysis cleanly (don't just send “stop”)
+            if (wasAnalysisRunning)
+                await StopAnalysisOnlyAsync().ConfigureAwait(false);
+
             using var ofd = new OpenFileDialog
             {
-                Title = "PGN Datei importieren (Hauptlinie)",
-                Filter = "PGN (*.pgn)|*.pgn|Alle Dateien (*.*)|*.*",
+                Title = "Import PGN Datei importieren (main line)",
+                Filter = "PGN (*.pgn)|*.pgn|All Files (*.*)|*.*",
                 CheckFileExists = true,
                 Multiselect = false
             };
@@ -907,28 +919,28 @@ namespace chessGUI
 
             if (sanMoves.Count == 0)
             {
-                MessageBox.Show("Keine Züge in der PGN gefunden (nach Entfernen von Varianten/Kommentaren).",
+                MessageBox.Show("No moves found in the PGN (after removing variations/comments).",
                     "PGN Import", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            // Analyse stoppen
+            // stop analysis
             if (_engine != null && _analysisCts != null)
                 await _engine.SendAsync("stop").ConfigureAwait(false);
 
-            // Alles auf Start zurück (History leer)
+            // Everything back to start (history empty)
             await NewGameAsync().ConfigureAwait(false);
 
-            // Gera.Chess: SAN ausführen + FEN nach jedem Halbzug sammeln :contentReference[oaicite:2]{index=2}
+            // Gera.Chess: Run SAN + collect FEN after every half move :contentReference[oaicite:2]{index=2}
             var board = new ChessBoard(); // Startpos
 
-            // wir bauen History komplett neu (Startstellung + n Halbzüge)
+            // We are rebuilding History from scratch (starting position + n half moves).
             _fenHistory.Clear();
             _moveHistory.Clear();
             _historyIndex = 0;
 
-            // Start-FEN aus Gera.Chess holen -> in unser Modell übernehmen
-            string startFen = board.ToFen(); // vorhanden laut Gera.Chess Doku :contentReference[oaicite:3]{index=3}
+            // Start FEN from Gera.Chess -> import into our model
+            string startFen = board.ToFen(); // Available according to Gera.Chess documentation: contentReference[oaicite:3]{index=3}
             _pos.LoadFen(startFen);
             _fenHistory.Add(_pos.ToFen());
 
@@ -938,7 +950,7 @@ namespace chessGUI
             {
                 try
                 {
-                    board.Move(san); // SAN ausführen :contentReference[oaicite:4]{index=4}
+                    board.Move(san); // Execute SAN :contentReference[oaicite:4]{index=4}
                 }
                 catch (Exception ex)
                 {
@@ -950,7 +962,7 @@ namespace chessGUI
                 string fen = board.ToFen();
                 _pos.LoadFen(fen);
 
-                _moveHistory.Add(san);      // Anzeige: SAN (passt zu PGN)
+                _moveHistory.Add(san);      // Display: SAN (matches PGN)
                 _fenHistory.Add(_pos.ToFen());
                 _historyIndex = _fenHistory.Count - 1;
                 importedPlies++;
@@ -960,20 +972,24 @@ namespace chessGUI
             RefreshMovesUI();
             UpdateNavButtons();
 
-            AppendAnalysisLine($"[GUI] PGN importiert: {importedPlies} Halbzüge (Hauptlinie).");
+            AppendAnalysisLine($"[GUI] PGN imported: {importedPlies} plies (main line).");
 
-            await StartEngineAsync().ConfigureAwait(false);          // falls noch nicht gestartet
-            await ApplyEngineOptionsAsync().ConfigureAwait(false);   // Optionen sicher setzen
-            await RestartAnalysisIfRunningAsync().ConfigureAwait(false);
+            await StartEngineAsync().ConfigureAwait(false);          // If not already started
+            await ApplyEngineOptionsAsync().ConfigureAwait(false);   // Set options securely
+
+            // Only restart the analysis if it was running previously
+            if (wasAnalysisRunning)
+                await StartAnalysisAsync().ConfigureAwait(false);
+
         }
 
         private void ExportPgn()
         {
-            // Startstellung alleine exportieren macht wenig Sinn, aber erlauben wir.
+            // Exporting the start position alone makes little sense, but we allow it.
             using var sfd = new SaveFileDialog
             {
-                Title = "PGN speichern",
-                Filter = "PGN (*.pgn)|*.pgn|Alle Dateien (*.*)|*.*",
+                Title = "save PGN",
+                Filter = "PGN (*.pgn)|*.pgn|all files (*.*)|*.*",
                 FileName = "game.pgn",
                 OverwritePrompt = true
             };
@@ -984,12 +1000,12 @@ namespace chessGUI
             string pgn = BuildPgnFromSanHistory();
 
             File.WriteAllText(sfd.FileName, pgn, Encoding.UTF8);
-            AppendAnalysisLine($"[GUI] PGN exportiert: {sfd.FileName}");
+            AppendAnalysisLine($"[GUI] PGN exported: {sfd.FileName}");
         }
 
         private string BuildPgnFromSanHistory()
         {
-            // Minimal-Header (kann später erweitert werden)
+            // Minimal-Header
             var sb = new StringBuilder();
             sb.AppendLine("[Event \"chessGUI\"]");
             sb.AppendLine("[Site \"Local\"]");
@@ -1000,7 +1016,7 @@ namespace chessGUI
             sb.AppendLine("[Result \"*\"]");
             sb.AppendLine();
 
-            // Moves: _moveHistory enthält SAN (von dir erzeugt oder beim Import)
+            // Moves: _moveHistory contains SAN (created by you or during import)
             for (int i = 0; i < _moveHistory.Count; i += 2)
             {
                 int moveNo = (i / 2) + 1;
@@ -1044,18 +1060,18 @@ namespace chessGUI
             if (!TrySelectGifOutputPath())
             {
                 FileLog.Write("Autoplay ABORT: no GIF output selected.");
-                AppendAnalysisLine("[GUI] Autoplay abgebrochen (kein GIF-Ziel gewählt).");
+                AppendAnalysisLine("[GUI] Autoplay canceled (no GIF target selected).");
                 return;
             }
 
             _autoplayRunning = true;
             _autoplayCts = new CancellationTokenSource();
-            await GoToStartAsync(); // immer bei Zug 1 starten
+            await GoToStartAsync(); // Always start with move 1
 
             FileLog.Write($"Autoplay START: historyIndex={_historyIndex} / last={(_fenHistory.Count - 1)}");
 
             UI(() => { if (_btnAutoplay != null) _btnAutoplay.Text = "Stop Play"; });
-            UI(() => AppendAnalysisLine("[GUI] Autoplay startet..."));
+            UI(() => AppendAnalysisLine("[GUI] Autoplay starting..."));
 
             try
             {
@@ -1063,7 +1079,7 @@ namespace chessGUI
 
                 var frames = new List<byte[]>();
 
-                // Frame 0: aktuelle Stellung (Start / aktueller Index)
+                // Frame 0: current position (start / current index)
                 frames.Add(CaptureBoardPngBytes());
 
                 while (_historyIndex < _fenHistory.Count - 1)
@@ -1072,35 +1088,35 @@ namespace chessGUI
 
                     await GoForwardAsync(); // UI-safe
 
-                    // nach dem Vorwärtsschritt Frame aufnehmen
+                    // After stepping forward, capture the frame.
                     frames.Add(CaptureBoardPngBytes());
 
                     await Task.Delay(FrameMs, _autoplayCts.Token);
                 }
 
-                UI(() => AppendAnalysisLine("[GUI] Autoplay fertig (Endstellung)."));
+                UI(() => AppendAnalysisLine("[GUI] Autoplay complete (end position)."));
                 FileLog.Write($"GIF: encoding frames={frames.Count} -> {_gifOutputPath}");
 
                 if (!string.IsNullOrWhiteSpace(_gifOutputPath))
                 {
-                    // Encoding bewusst nicht auf UI-Thread
+                    // Encoding deliberately not on UI thread
                     string path = _gifOutputPath;
                     await Task.Run(async () => await SaveGifAsync(frames, path, FrameMs).ConfigureAwait(false)).ConfigureAwait(false);
-                    UI(() => AppendAnalysisLine($"[GUI] GIF gespeichert: {_gifOutputPath}"));
+                    UI(() => AppendAnalysisLine($"[GUI] GIF saved: {_gifOutputPath}"));
                     FileLog.Write($"GIF: saved {path}");
                 }
 
             }
             catch (OperationCanceledException)
             {
-                AppendAnalysisLine("[GUI] Autoplay gestoppt.");
+                AppendAnalysisLine("[GUI] Autoplay stopped.");
                 FileLog.Write("Autoplay CANCELED.");
             }
             catch (Exception ex)
             {
-                AppendAnalysisLine("[GUI] Autoplay FEHLER: " + ex.GetType().Name + " - " + ex.Message);
+                AppendAnalysisLine("[GUI] Autoplay ERROR: " + ex.GetType().Name + " - " + ex.Message);
                 FileLog.Write("Autoplay ERROR: " + ex);
-                MessageBox.Show(ex.ToString(), "Autoplay Fehler", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(ex.ToString(), "Autoplay Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
@@ -1156,7 +1172,7 @@ namespace chessGUI
         {
             using var sfd = new SaveFileDialog
             {
-                Title = "GIF speichern",
+                Title = "save GIF",
                 Filter = "GIF (*.gif)|*.gif",
                 FileName = "chess_autoplay.gif",
                 AddExtension = true,
@@ -1175,11 +1191,11 @@ namespace chessGUI
             _currentFen = fen;
             _pendingAnalysisFen = fen;
 
-            // Nur wenn Analyse läuft und Engine da ist
+            // Only when analysis is running and engine is present
             if (_engine == null || _analysisCts == null)
                 return;
 
-            // Coalesce: nur 1 Worker gleichzeitig starten
+            // Coalesce: start only 1 worker at a time
             if (Interlocked.Exchange(ref _analysisUpdateScheduled, 1) == 1)
                 return;
 
@@ -1198,13 +1214,13 @@ namespace chessGUI
                             if (f == null) break;
                             if (_engine == null || _analysisCts == null) break;
 
-                            // UCI-Sequenz MUSS exklusiv sein, sonst kollidiert "bestmove" mit Probe/Stop
+                            // UCI sequence MUST be exclusive, otherwise “bestmove” will conflict with Probe/Stop.
                             await _engineOpLock.WaitAsync().ConfigureAwait(false);
                             try
                             {
                                 if (_engine == null || _analysisCts == null) break;
 
-                                // Analyse-Transition: stop -> (bestmove ack) -> position -> go infinite
+                                // Analysis transition: stop -> (best move ack) -> position -> go infinite
                                 await StopSearchAndWaitBestmoveAsync(0).ConfigureAwait(false);
 
                                 await _engine.SendAsync($"position fen {f}").ConfigureAwait(false);
@@ -1215,7 +1231,7 @@ namespace chessGUI
                                 _engineOpLock.Release();
                             }
 
-                            // Falls währenddessen schon wieder ein neuer Fen-Wunsch kam: loop
+                            // In case a new Fen request came in again in the meantime: loop
                             if (_pendingAnalysisFen == null) break;
                         }
                     }
@@ -1232,20 +1248,18 @@ namespace chessGUI
                 {
                     Interlocked.Exchange(ref _analysisUpdateScheduled, 0);
 
-                    // Falls während Reset jemand neuen Fen gesetzt hat, direkt nochmal anstoßen
+                    // If someone has set a new Fen during reset, kick it again immediately.
                     if (_pendingAnalysisFen != null && _engine != null && _analysisCts != null)
                         RequestAnalysisUpdate(_pendingAnalysisFen);
                 }
             });
         }
 
-
-
         private async Task NewGameAsync()
         {
             StopAutoplay();
 
-            // Analyse stoppen (falls läuft)
+            // stop analysis (if running)
             if (_engine != null && _analysisCts != null)
                 await _engine.SendAsync("stop").ConfigureAwait(false);
 
@@ -1264,7 +1278,7 @@ namespace chessGUI
             _analysis.Clear();
             AppendAnalysisLine("[GUI] New Game.");
 
-            // WICHTIG für deinen modifizierten Stockfish: position startpos senden
+            // send position startpos
             if (_engine != null)
             {
                 await _engine.SendAsync("setoption name MultiPV value 3").ConfigureAwait(false);
@@ -1298,17 +1312,17 @@ namespace chessGUI
             if (string.IsNullOrWhiteSpace(fen))
                 return;
 
-            // toleranter machen: Mehrfach-Spaces reduzieren
+            // Make it more tolerant: Reduce multiple spaces
             fen = Regex.Replace(fen, @"\s+", " ");
 
-            // Viele User haben nur 4 Felder (ohne halfmove/fullmove) – UCI erwartet meist 6 -> auffüllen
+            // Many users only have 4 fields (without halfmove/fullmove) – UCI usually expects 6 -> fill in
             fen = EnsureFen6Fields(fen);
 
-            // Validieren: dein ChessPosition kann FEN laden (wir nutzen try/catch als Validator)
+            // Validate: your ChessPosition can load FEN (we use try/catch as a validator)
             try
             {
-                var tmp = ChessPosition.FromFen(fen);  // validiert
-                fen = tmp.ToFen();                     // kanonisieren (optional, aber praktisch)
+                var tmp = ChessPosition.FromFen(fen);  
+                fen = tmp.ToFen();                     
             }
             catch (Exception ex)
             {
@@ -1323,11 +1337,11 @@ namespace chessGUI
             var parts = fen.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length >= 6) return fen;
 
-            // Minimal: 4 Felder sind üblich (placement, side, castling, ep)
+            // Minimum: 4 fields are standard (placement, side, castling, ep)
             if (parts.Length == 4)
                 return fen + " 0 1";
 
-            // 5 Felder -> fullmove fehlt
+            // 5 fields -> full move missing
             if (parts.Length == 5)
                 return fen + " 1";
 
@@ -1336,7 +1350,7 @@ namespace chessGUI
 
         private async Task LoadFenAsNewGameAsync(string fen)
         {
-            // Analyse stoppen (falls läuft)
+            // Stop analysis (if running)
             if (_engine != null && _analysisCts != null)
                 await _engine.SendAsync("stop").ConfigureAwait(false);
 
@@ -1359,16 +1373,16 @@ namespace chessGUI
             AppendAnalysisLine("[GUI] Set position from FEN.");
             AppendAnalysisLine("[GUI] FEN: " + _pos.ToFen());
 
-            // Engine auf diese Stellung setzen (statt position startpos) :contentReference[oaicite:5]{index=5}
+            //  Set engine to this position (instead of position startpos): contentReference[oaicite:5]{index=5}
             if (_engine != null)
             {
-                await ApplyEngineOptionsAsync().ConfigureAwait(false); // setzt Threads/MultiPV/Hash + readyok :contentReference[oaicite:6]{index=6}
+                await ApplyEngineOptionsAsync().ConfigureAwait(false); // sets threads/multiPV/hash + readyok :contentReference[oaicite:6]{index=6}
                 await _engine.SendAsync($"position fen {_pos.ToFen()}").ConfigureAwait(false);
             }
 
             _board.SetBestMoveArrow(null, null);
 
-            // Falls Analyse läuft: direkt neu anstoßen (dein Coalesce-Mechanismus macht das sauber) :contentReference[oaicite:7]{index=7}
+            // If analysis is running: restart immediately (coalesce mechanism will handle this cleanly) :contentReference[oaicite:7]{index=7}
             await RestartAnalysisIfRunningAsync().ConfigureAwait(false);
         }
                 
@@ -1423,7 +1437,7 @@ namespace chessGUI
                 }
             }
 
-            // Wenn Analyse läuft: sofort stoppen (wie gehabt)
+            // If analysis is running: stop immediately
             if (_analysisCts != null)
             {
                 var t = NowTicks();
@@ -1433,7 +1447,7 @@ namespace chessGUI
 
             string prevFenForSan = _pos.ToFen();
 
-            // 1) Legalität über Engine
+            // 1) Legality via engine
             {
                 var t = NowTicks();
                 bool legal = await IsUciMoveLegalByEngineAsync(prevFenForSan, uciMove).ConfigureAwait(false);
@@ -1441,7 +1455,7 @@ namespace chessGUI
 
                 if (!legal)
                 {
-                    AppendAnalysisLine($"[GUI] illegal/abgelehnt: {uciMove}");
+                    AppendAnalysisLine($"[GUI] illegal/rejected: {uciMove}");
                     BeepIllegalMove();
 
                     var t2 = NowTicks();
@@ -1453,12 +1467,12 @@ namespace chessGUI
                 }
             }
 
-            // 2) Nächste Stellung über Gera.Chess
+            // 2) Next position via Gera.Chess
             {
                 var t = NowTicks();
                 if (!TryApplyUciWithGeraChess(prevFenForSan, uciMove, out string nextFen))
                 {
-                    AppendAnalysisLine($"[GUI] illegal/abgelehnt (gera-fail): {uciMove}");
+                    AppendAnalysisLine($"[GUI] illegal/rejected (gera-fail): {uciMove}");
 
                     var t2 = NowTicks();
                     await RestartAnalysisIfRunningAsync().ConfigureAwait(false);
@@ -1509,14 +1523,14 @@ namespace chessGUI
                 LogTiming("Board.SetPosition + UpdateNavButtons", t);
             }
 
-            // Analyse anstoßen
+            // start analysis
             {
                 var t = NowTicks();
                 RequestAnalysisUpdate(_pos.ToFen());
                 LogTiming("RequestAnalysisUpdate", t);
             }
 
-            AppendAnalysisLine($"[GUI] angewendet: {uciMove}  FEN: {_pos.ToFen()}");
+            AppendAnalysisLine($"[GUI] applied: {uciMove}  FEN: {_pos.ToFen()}");
             LogTiming("TryApplyUserMoveViaEngineAsync TOTAL (ok)", tAll);
             return true;
         }
@@ -1534,7 +1548,7 @@ namespace chessGUI
                 string from = uciMove.Substring(0, 2);
                 string to = uciMove.Substring(2, 2);
 
-                // 1) Erst über Gera.Chess versuchen (bevorzugt für EP/Castling/50-move etc.)
+                // 1) First try Gera.Chess (preferably for EP/Castling/50-move etc.)
                 try
                 {
                     var board = ChessBoard.LoadFromFen(prevFen);
@@ -1546,12 +1560,12 @@ namespace chessGUI
                         char promoLower = char.ToLowerInvariant(promoRaw);
                         char promoUpper = char.ToUpperInvariant(promoRaw);
 
-                        // Manche Gera.Chess-Versionen nutzen (from,to,char), aber erwarten ggf. Q/R/B/N statt q/r/b/n.
+                        // Some Gera.Chess versions use (from,to,char), but may expect Q/R/B/N instead of q/r/b/n.
                         var ctor = typeof(Move).GetConstructor(new[] { typeof(string), typeof(string), typeof(char) });
                         if (ctor == null)
                             throw new InvalidOperationException("Move(from,to,char) ctor missing");
 
-                        // Versuch 1: lower
+                        // trial 1: lower
                         try
                         {
                             move = (Move)ctor.Invoke(new object[] { from, to, promoLower });
@@ -1561,7 +1575,7 @@ namespace chessGUI
                         }
                         catch
                         {
-                            // Versuch 2: upper
+                            // trial 2: upper
                             move = (Move)ctor.Invoke(new object[] { from, to, promoUpper });
                             board.Move(move);
                             nextFen = board.ToFen();
@@ -1578,7 +1592,7 @@ namespace chessGUI
                 }
                 catch
                 {
-                    // 2) Fallback: interner FEN-Mover (reicht für Promotion absolut aus)
+                    // 2) Fallback: internal FEN mover (absolutely sufficient for promotion)
                     var p = ChessPosition.FromFen(prevFen);
                     if (!p.TryApplyUciMove(uciMove))
                         return false;
@@ -1596,7 +1610,6 @@ namespace chessGUI
 
         private void ApplyZoom()
         {
-            // TrackBar 40..140 -> Brettgröße etwas kompakter (linear)
             var size = (int)Math.Round(_zoom.Value / 100.0 * 640);
             size = Math.Max(300, Math.Min(860, size));
 
@@ -1609,7 +1622,7 @@ namespace chessGUI
         {
             if (_engine != null) return;
 
-            // 1) Pfad laden/prüfen, sonst auswählen
+            // 1) Load/check path, otherwise select
             if (string.IsNullOrWhiteSpace(_engineExePath) || !File.Exists(_engineExePath))
             {
                 using var ofd = new OpenFileDialog
@@ -1630,7 +1643,7 @@ namespace chessGUI
                 cfg.Save();
             }
 
-            // 2) Engine starten (WorkingDirectory = Engine-Ordner => Textfiles dort)
+            // 2) Start engine (WorkingDirectory = Engine folder => Text files there)
             _engine = new UciEngine(_engineExePath, HandleEngineLine);
 
             await _engine.StartAsync().ConfigureAwait(false);
@@ -1640,7 +1653,7 @@ namespace chessGUI
 
             await ApplyEngineOptionsAsync().ConfigureAwait(false);
 
-            AppendAnalysisLine("[GUI] Engine bereit.");
+            AppendAnalysisLine("[GUI] Engine ready.");
             UI(() => _board.SetBestMoveArrow(null, null));
             _uiUnlocked = true;
             ApplyUiLockState();
@@ -1649,7 +1662,6 @@ namespace chessGUI
             SetButtonActive(_btnStart, true, Theme.AccentEngine);
             SetButtonActive(_btnStop, false, Theme.Danger);
         }
-
 
         private async Task StartAnalysisAsync()
         {
@@ -1661,12 +1673,12 @@ namespace chessGUI
 
             _analysisCts?.Cancel();
             _analysisCts = new CancellationTokenSource();
-            ApplyUiLockState();   // Stop wird jetzt enabled
+            ApplyUiLockState();   // Stop is now enabled
 
             SetButtonActive(_btnAnalyse, true, Theme.AccentAnalyse);
 
             _analysis.Clear();
-            AppendAnalysisLine("[GUI] Analyse startet...");
+            AppendAnalysisLine("[GUI] Analysis starting...");
 
             RequestAnalysisUpdate(_currentFen);
             await Task.CompletedTask;
@@ -1699,7 +1711,7 @@ namespace chessGUI
             _analysisCts?.Cancel();
             _analysisCts = null;
 
-            // Bestmove-Pfeil entfernen (Schönheitsfehler beheben)
+            // Remove Bestmove arrow (fix cosmetic flaw)
             _board.SetBestMoveArrow(null, null);
 
             ApplyUiLockState();
@@ -1717,12 +1729,15 @@ namespace chessGUI
                     await _engine.SendAsync("quit").ConfigureAwait(false);
                 }
             }
-            catch { /* bewusst minimal */ }
+            catch
+            {
+                // deliberately minimal
+            }
             finally
             {
                 _analysisCts?.Cancel();
                 _analysisCts = null;
-                ApplyUiLockState();   // Stop wird jetzt disabled
+                ApplyUiLockState();   // Stop will now be disabled
 
                 _engine?.Dispose();
                 _engine = null;
@@ -1739,11 +1754,11 @@ namespace chessGUI
         {
             try
             {
-                System.Media.SystemSounds.Beep.Play(); // alternativ: SystemSounds.Hand / Exclamation / Asterisk
+                System.Media.SystemSounds.Beep.Play(); // alternatively: SystemSounds.Hand / Exclamation / Asterisk
             }
             catch
             {
-                // bewusst minimal
+                // deliberately minimal
             }
         }
 
@@ -1752,13 +1767,12 @@ namespace chessGUI
         {
             if (_suppressEngineUi)
             {
-                // Wichtig: bestmove-Probe trotzdem zulassen (Legalitätscheck)
+                // Important: Allow bestmove trial anyway (legality check)
                 if (!line.StartsWith("bestmove ", StringComparison.Ordinal))
                     return;
             }
 
-            // 1) bestmove-Probe für searchmoves (Legalitätscheck) – thread-safe
-            // 1) bestmove-Probe für searchmoves (Legalitätscheck) – thread-safe
+            // 1) bestmove sample for searchmoves (legality check) – thread-safe
             if (line.StartsWith("bestmove ", StringComparison.Ordinal))
             {
                 // A) Ack für StopAnalysisImmediatelyAsync (stop -> bestmove)
@@ -1780,20 +1794,20 @@ namespace chessGUI
                 tcs?.TrySetResult(line);
             }
 
-            // 2) Info-Zeilen: parsing im Reader-Thread, UI nur gedrosselt
+            // 2) Info lines: parsing in the reader thread, UI only throttled
             if (line.StartsWith("info ", StringComparison.Ordinal))
             {
                 var parsed = UciInfo.TryParse(line);
                 if (parsed == null) return;
 
-                // nur PV1
+                // only PV1
                 if (parsed.MultiPv.HasValue && parsed.MultiPv.Value != 1) return;
 
                 long now = _uiThrottleSw.ElapsedMilliseconds;
                 if (now < _nextUiUpdateMs) return;
                 _nextUiUpdateMs = now + 200;
 
-                // Arrow nur bei neuer Depth
+                // Arrow only for new depth
                 if (parsed.Depth.HasValue && parsed.Depth.Value != _lastDepthForArrow)
                 {
                     _lastDepthForArrow = parsed.Depth.Value;
@@ -1803,7 +1817,7 @@ namespace chessGUI
                         var first = parsed.Pv.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                         if (first.Length > 0 && first[0].Length >= 4)
                         {
-                            // Pfeil NUR bei laufender Analyse (Legalitätscheck soll keinen Pfeil setzen)
+                            // Arrow ONLY during analysis (legality check should not set an arrow)
                             if (_analysisCts != null && !_analysisCts.IsCancellationRequested)
                             {
                                 string mv = first[0];
@@ -1816,7 +1830,7 @@ namespace chessGUI
                     }
                 }
 
-                // Log nur bei neuer Depth
+                // Log only for new depth
                 if (parsed.Depth.HasValue && parsed.Depth.Value != _lastDepthForLog)
                 {
                     _lastDepthForLog = parsed.Depth.Value;
@@ -1827,7 +1841,7 @@ namespace chessGUI
                 return;
             }
 
-            // 3) bestmove normal anzeigen (UI)
+            // 3) bestmove show normal (UI)
             if (line.StartsWith("bestmove ", StringComparison.Ordinal))
             {
                 var s = line.Trim();
@@ -1836,7 +1850,7 @@ namespace chessGUI
         }
 
 
-        // ====== NEU: Legality-Check über UCI-standard "searchmoves" ======
+        // ====== NEW: Legality check via UCI standard “searchmoves” ======
         private async Task<bool> IsUciMoveLegalByEngineAsync(string prevFen, string uciMove)
         {
             if (_engine == null) return false;
@@ -1899,8 +1913,6 @@ namespace chessGUI
             }
         }
 
-
-
         private void AppendAnalysisLine(string s)
         {
             FileLog.Write("UI: " + s);
@@ -1916,7 +1928,7 @@ namespace chessGUI
             if (_analysis.TextLength > 200_000)
             {
                 _analysis.Clear();
-                _analysis.AppendText("[GUI] Log gekürzt.\r\n");
+                _analysis.AppendText("[GUI] Log truncated.\r\n");
             }
 
             _analysis.AppendText(s + Environment.NewLine);
@@ -1945,7 +1957,7 @@ namespace chessGUI
             b.MouseDown += (_, __) => { if (b.Enabled) b.BackColor = down; };
             b.MouseUp += (_, __) => { if (b.Enabled) b.BackColor = b.Bounds.Contains(b.PointToClient(Cursor.Position)) ? hover : normal; };
 
-            // Optional: Akzent-Rand (Engine/Analyse/Danger)
+            // Optional: Accent border (engine/analysis/danger)
             if (accent.HasValue)
                 b.FlatAppearance.BorderColor = accent.Value;
         }
@@ -1971,7 +1983,7 @@ namespace chessGUI
 
         private byte[] CaptureBoardPngBytes()
         {
-            // nur Brett rendern, aktuelle Control-Größe
+            // Render board only, current control size
             int w = _board.Width;
             int h = _board.Height;
             if (w <= 0 || h <= 0) return Array.Empty<byte>();
@@ -1993,7 +2005,7 @@ namespace chessGUI
             using var gif = SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.Rgba32>(pngFrames[0]);
 
             var meta = gif.Metadata.GetGifMetadata();
-            meta.RepeatCount = 0; // Endlosschleife
+            meta.RepeatCount = 0; // Endless loop
 
             gif.Frames.RootFrame.Metadata.GetGifMetadata().FrameDelay = delay100;
 
@@ -2281,11 +2293,8 @@ namespace chessGUI
             Invalidate();
         }
 
-
         private int MapIndexForDraw(int i) => _flipped ? (7 - i) : i; 
         private int MapIndexFromMouse(int i) => _flipped ? (7 - i) : i;
-
-
 
 
         public BoardControl()
@@ -2311,7 +2320,7 @@ namespace chessGUI
             if (!TrySquareToRc(_bestFrom, out int fr, out int fc)) return;
             if (!TrySquareToRc(_bestTo, out int tr, out int tc)) return;
 
-            // Flip: LOGICAL -> VISUAL Koordinaten (wie beim Figurenzeichnen)
+            // Flip: LOGICAL -> VISUAL coordinates (as in piece drawing)
             if (flipped)
             {
                 fr = 7 - fr;
@@ -2320,7 +2329,7 @@ namespace chessGUI
                 tc = 7 - tc;
             }
 
-            // Zentren der Felder
+            // Centers of the fields
             float x1 = origin.X + fc * cell + cell / 2f;
             float y1 = origin.Y + fr * cell + cell / 2f;
             float x2 = origin.X + tc * cell + cell / 2f;
@@ -2334,7 +2343,7 @@ namespace chessGUI
             float ux = dx / len;
             float uy = dy / len;
 
-            // Pfeil nicht bis exakt zum Zentrum laufen lassen (wegen Figuren)
+            // Do not let the arrow run exactly to the center (because of pieces)
             float shortenStart = cell * 0.18f;
             float shortenEnd = cell * 0.28f;
 
@@ -2343,18 +2352,18 @@ namespace chessGUI
             float ex = x2 - ux * shortenEnd;
             float ey = y2 - uy * shortenEnd;
 
-            // Linienstärke zoom-stabil
+            // Line thickness zoom-stable
             float lineW = Math.Max(2.5f, cell * 0.07f);
             float glowW = lineW * 1.7f;
 
-            var color = Color.FromArgb(210, 0, 90, 0);        // dunkelgrün
-            var glow = Color.FromArgb(60, 0, 90, 0);        // dezent
+            var color = Color.FromArgb(210, 0, 90, 0);      // dark green
+            var glow = Color.FromArgb(60, 0, 90, 0);        // decent
 
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             g.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
             g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
 
-            // Glow (optional, hilft bei hell/dunkel Kontrast)
+            // Glow (optional, helps with light/dark contrast)
             using (var pGlow = new Pen(glow, glowW))
             {
                 pGlow.StartCap = System.Drawing.Drawing2D.LineCap.Round;
@@ -2362,7 +2371,7 @@ namespace chessGUI
                 g.DrawLine(pGlow, sx, sy, ex, ey);
             }
 
-            // Hauptlinie
+            // main line
             using (var p = new Pen(color, lineW))
             {
                 p.StartCap = System.Drawing.Drawing2D.LineCap.Round;
@@ -2370,19 +2379,19 @@ namespace chessGUI
                 g.DrawLine(p, sx, sy, ex, ey);
             }
 
-            // Pfeilspitze als Dreieck (manuell, kein AdjustableArrowCap)
+            // Arrowhead as triangle (manual, no AdjustableArrowCap)
             float headLen = Math.Max(10f, cell * 0.28f);
             float headW = headLen * 0.65f;
 
-            // Spitze sitzt am Ende (ex, ey), zeigt in Richtung (ux,uy)
+            // The head is at the end (ex, ey), pointing in the direction (ux,uy)
             float hx = ex;
             float hy = ey;
 
-            // Basis der Spitze
+            // Base of the head
             float bx = hx - ux * headLen;
             float by = hy - uy * headLen;
 
-            // Normalenvektor
+            // Normal vector
             float nx = -uy;
             float ny = ux;
 
@@ -2418,14 +2427,13 @@ namespace chessGUI
             return true;
         }
 
-
         public void SetPosition(ChessPosition pos)
         {
             Fen = pos.ToFen();
             _dragFrom = null;
             _isDragging = false;
 
-            // Drop-Preview entfernen, weil echte Position jetzt da ist
+            // Remove drop preview because real position is now available
             _hasDropPreview = false;
             _dropFrom = null;
             _dropTo = null;
@@ -2433,7 +2441,6 @@ namespace chessGUI
 
             Invalidate();
         }
-
 
         protected override void OnMouseDown(MouseEventArgs e)
         {
@@ -2454,7 +2461,7 @@ namespace chessGUI
             _lastDragInvalid = Rectangle.Empty;
 
             Capture = true;
-            Invalidate(); // einmalig ok
+            Invalidate(); // once is ok
 
             DragStarted?.Invoke(this, EventArgs.Empty);
         }
@@ -2473,13 +2480,13 @@ namespace chessGUI
 
             var (to, ok) = PointToSquare(e.Location);
 
-            // Drag-State beenden
+            // Finish Drag-State
             _isDragging = false;
             _dragFrom = null;
             _dragPiece = '\0';
             _lastDragInvalid = Rectangle.Empty;
 
-            // Wenn Drop gültig und Feldwechsel: Preview setzen (sofortige Optik)
+            // If drop is valid and field change: Set preview (immediate visual display)
             if (ok && !string.IsNullOrWhiteSpace(from) && !string.IsNullOrWhiteSpace(to) &&
                 !string.Equals(from, to, StringComparison.Ordinal))
             {
@@ -2490,7 +2497,7 @@ namespace chessGUI
             }
             else
             {
-                // Kein richtiger Zug -> Preview aus
+                // No valid move -> Preview off
                 _hasDropPreview = false;
                 _dropFrom = null;
                 _dropTo = null;
@@ -2517,13 +2524,12 @@ namespace chessGUI
 
             _dragPoint = e.Location;
 
-            // Board-Geometrie wie in OnPaint:
+            // Board geometry as in OnPaint:
             var boardSize = Math.Min(ClientSize.Width, ClientSize.Height);
-            // origin ist hier eigentlich nicht nötig, kann aber bleiben
             var origin = new Point((ClientSize.Width - boardSize) / 2, (ClientSize.Height - boardSize) / 2);
             var cell = boardSize / 8;
 
-            // Neues Overlay-Rechteck (mit etwas Rand für Outline/AA)
+            // New overlay rectangle (with a little margin for outline/AA)
             int pad = Math.Max(4, cell / 10);
             var rectNow = Rectangle.Round(new RectangleF(
                 _dragPoint.X - cell / 2f,
@@ -2534,7 +2540,7 @@ namespace chessGUI
 
             _lastDragInvalid = rectNow;
 
-            // Nur die betroffenen Bereiche neu zeichnen
+            // Only redraw the affected areas
             if (!old.IsEmpty) Invalidate(old);
             Invalidate(rectNow);
         }
@@ -2567,7 +2573,7 @@ namespace chessGUI
                 // sq: "e2"
                 int f = sq[0] - 'a';
                 int rank = sq[1] - '0';
-                int r = 8 - rank; // r=0 ist Rank 8
+                int r = 8 - rank; // r=0 is rank 8
 
                 var placement = Fen.Split(' ')[0];
                 var ranks = placement.Split('/');
@@ -2603,8 +2609,8 @@ namespace chessGUI
             var origin = new Point((ClientSize.Width - boardSize) / 2, (ClientSize.Height - boardSize) / 2);
             var cell = boardSize / 8;
 
-            using var light = new SolidBrush(Color.FromArgb(215, 220, 215)); // warmes off-white
-            using var dark = new SolidBrush(Color.FromArgb(90, 95, 105));   // kühles dunkles grau
+            using var light = new SolidBrush(Color.FromArgb(215, 220, 215)); // warm off-white
+            using var dark = new SolidBrush(Color.FromArgb(90, 95, 105));   // cool dark gray
 
             using var sel = new SolidBrush(Color.FromArgb(120, 80, 160, 255));
             using var pen = new Pen(Color.FromArgb(60, 60, 60), 1);
@@ -2624,16 +2630,15 @@ namespace chessGUI
                     e.Graphics.FillRectangle(isLight ? light : dark, rect);
                     e.Graphics.DrawRectangle(pen, rect);
 
-                    // Selection muss über LOGICAL Square laufen
+                    // Selection must run via LOGICAL Square
                     var sq = ToSquare(LR(vr), LC(vc));
                     if (_isDragging && _dragFrom == sq)
                         e.Graphics.FillRectangle(sel, rect);
                 }
             }
 
-            // Pfeil nach den Feldern, vor den Figuren
-            // WICHTIG: DrawBestMoveArrow muss ebenfalls Flip berücksichtigen.
-            // -> siehe Hinweis unten, wie du das minimal anpasst.
+            // Arrow after the fields, before the figures
+            // IMPORTANT: DrawBestMoveArrow must also take flip into account.
             DrawBestMoveArrow(e.Graphics, origin, cell, _flipped);
 
             // pieces (Unicode chess)
@@ -2645,7 +2650,7 @@ namespace chessGUI
             var fmt = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
 
             // Figuren zeichnen (Startfeld während Drag überspringen)
-            for (int r = 0; r < 8; r++) // r ist LOGICAL rank (FEN: 0=8. Reihe)
+            for (int r = 0; r < 8; r++) // r is LOGICAL rank (FEN: 0 = 8th rank)
             {
                 int file = 0;
                 foreach (var ch in ranks[r])
@@ -2656,17 +2661,17 @@ namespace chessGUI
                         continue;
                     }
 
-                    // LOGICAL square (passt zu FEN)
+                    // LOGICAL square (fits to FEN)
                     var sq = ToSquare(r, file);
 
-                    // Wenn Drag aktiv: Figur am Startfeld nicht zeichnen (sie kommt als Overlay an der Maus)
+                    // When drag is active: Do not draw the character on the start field (it appears as an overlay on the mouse).
                     if (_isDragging && _dragFrom == sq)
                     {
                         file++;
                         continue;
                     }
 
-                    // Wenn Drop-Preview aktiv: Startfeld und Zielfeld unterdrücken (Preview wird später gezeichnet)
+                    // If drop preview is active: Suppress start field and target field (preview will be drawn later)
                     if (_hasDropPreview && (_dropFrom == sq || _dropTo == sq))
                     {
                         file++;
@@ -2683,7 +2688,7 @@ namespace chessGUI
 
                     bool isWhite = char.IsUpper(ch);
 
-                    // Outline nur für weiße Figuren
+                    // Outline only for white pieces
                     if (isWhite)
                     {
                         using var outlineBrush = new SolidBrush(Color.FromArgb(220, 0, 0, 0));
@@ -2707,7 +2712,7 @@ namespace chessGUI
                 }
             }
 
-            // Drop-Preview: Figur sofort am Ziel anzeigen
+            // Drop preview: Display figure immediately at destination
             if (_hasDropPreview && _dropPiece != '\0' &&
                 !string.IsNullOrWhiteSpace(_dropTo) &&
                 TrySquareToRc(_dropTo, out int pr, out int pc))
@@ -2720,7 +2725,7 @@ namespace chessGUI
 
                 bool isWhite = char.IsUpper(_dropPiece);
 
-                // Outline nur für weiße Figuren (wie bei normalen Pieces)
+                // Outline only for white pieces (as with normal pieces)
                 if (isWhite)
                 {
                     using var outlineBrush = new SolidBrush(Color.FromArgb(220, 0, 0, 0));
@@ -2742,12 +2747,12 @@ namespace chessGUI
             }
 
 
-            // Drag-Overlay: Figur an der Maus (ZENTRIERT)
+            // Drag overlay: Figure at mouse (CENTERED)Drag overlay: Figure at mouse (CENTERED)
             if (_isDragging && _dragPiece != '\0')
             {
                 var uni = PieceToUnicode(_dragPiece);
 
-                // Maus im Zentrum der Figur
+                // Mouse at the center of the figure
                 var rect = new RectangleF(
                     _dragPoint.X - cell / 2f,
                     _dragPoint.Y - cell / 2f,
@@ -2776,20 +2781,20 @@ namespace chessGUI
                 e.Graphics.DrawString(uni, pieceFont, brush, rect, fmt);
             }
 
-            // Side-Indikator (rechts unten)
+            // Side-Indicator (right bottom)
             DrawSideIndicator(e.Graphics, origin, boardSize);
         }
 
         private void DrawSideIndicator(Graphics g, Point origin, int boardSize)
         {
             const int size = 13;
-            const int gap = 6;     // Abstand neben dem Brett
+            const int gap = 6;     // Distance next to the board
 
-            // rechts neben dem Brett, unten ausgerichtet
+            // to the right of the board, aligned at the bottom
             int x = origin.X + boardSize + gap;
             int y = origin.Y + boardSize - size;
 
-            // Falls rechts kein Platz ist, fallback: innen rechts unten
+            // If there is no space on the right, fallback: bottom right inside
             if (x + size > ClientSize.Width)
             {
                 x = origin.X + boardSize - 4 - size;
@@ -2823,18 +2828,18 @@ namespace chessGUI
             int vr = y / cell;   // visual row 0..7
             if (vc < 0 || vc > 7 || vr < 0 || vr > 7) return (null, false);
 
-            // VISUAL -> LOGICAL (bei Flip spiegeln)
+            // VISUAL -> LOGICAL (flip mirror)
             int lc = _flipped ? (7 - vc) : vc;
             int lr = _flipped ? (7 - vr) : vr;
 
-            // Jetzt LOGICAL Koordinaten in Square umsetzen (muss zu deinem FEN-Layout passen)
+            // Now convert LOGICAL coordinates to Square (must match your FEN layout)
             return (ToSquare(lr, lc), true);
         }
 
 
         private static string ToSquare(int r, int c)
         {
-            // r=0 ist Rank 8
+            // r=0 is rank 8
             char file = (char)('a' + c);
             char rank = (char)('8' - r);
             return string.Concat(file, rank);
@@ -2899,7 +2904,7 @@ namespace chessGUI
             // 3) Castling
             sb.Append(' ').Append(string.IsNullOrWhiteSpace(_castling) ? "-" : _castling);
 
-            // 4) EP (X-FEN/lichess/Stockfish-style): nur ausgeben, wenn Side-to-move wirklich ep schlagen kann
+            // 4) EP (X-FEN/lichess/Stockfish-style): Only output if Side-to-move can really beat ep.
             string epOut = ComputeTrueEpForOutput();
             sb.Append(' ').Append(epOut);
 
@@ -2912,11 +2917,11 @@ namespace chessGUI
 
         private string ComputeTrueEpForOutput()
         {
-            // Wenn intern kein ep gesetzt ist -> "-"
+            // If no ep is set internally -> “-”
             if (string.IsNullOrWhiteSpace(_ep) || _ep == "-")
                 return "-";
 
-            // EP-Square muss valide sein (z.B. "e3" oder "d6")
+            // EP-Square must be valid (e.g., “e3” or “d6”)
             if (_ep.Length != 2)
                 return "-";
 
@@ -2925,15 +2930,15 @@ namespace chessGUI
             if (file < 0 || file > 7 || rank < 1 || rank > 8)
                 return "-";
 
-            // interne Zeilenindizes: r=0 ist Rank 8, r=7 ist Rank 1
+            // internal indices: r=0 is rank 8, r=7 is rank 1
             int epR = 8 - rank;   // EP-Zielfeld in Board-Indizes
 
-            // Für "true ep" reicht die Pseudo-Legalitätsprüfung:
-            // Side-to-move muss einen Bauern haben, der von links/rechts auf epR, file schlagen könnte.
+            // For “true ep,” the pseudo-legality check is sufficient:
+            // Side-to-move must have a pawn that could capture from the left/right on epR, file.
             char pawn = (_side == 'w') ? 'P' : 'p';
 
-            // Weiß kann ep nur auf Rank 6 (epR=2) schlagen, dabei stehen seine Bauern auf Rank 5 (r=3)
-            // Schwarz kann ep nur auf Rank 3 (epR=5) schlagen, dabei stehen seine Bauern auf Rank 4 (r=4)
+            // White can only capture ep on rank 6 (epR=2), while his pawns are on rank 5 (r=3).
+            // Black can only capture ep on rank 3 (epR=5), while his pawns are on rank 4 (r=4).
             int pawnR = (_side == 'w') ? epR + 1 : epR - 1;
             if (pawnR < 0 || pawnR > 7)
                 return "-";
@@ -2970,7 +2975,6 @@ namespace chessGUI
             }
             if (_castling == "-") _castling = "";
         }
-
         
         public bool TryApplyUciMove(string uci)
         {
@@ -2989,7 +2993,7 @@ namespace chessGUI
             if (_side == 'w' && !char.IsUpper(piece)) return false;
             if (_side == 'b' && !char.IsLower(piece)) return false;
 
-            // Capture merken (für halfmove)
+            // notrice Capture (for halfmove)
             bool isCapture = _b[tr, tf] != '\0';
 
             _b[fr, ff] = '\0';
@@ -3002,7 +3006,7 @@ namespace chessGUI
                 isCapture = true;
             }
 
-            // Rochade minimal
+            // castling minimal
             if (piece == 'K' && from == "e1" && to == "g1") { MovePiece("h1", "f1"); RemoveCastling('K', 'Q'); }
             if (piece == 'K' && from == "e1" && to == "c1") { MovePiece("a1", "d1"); RemoveCastling('K', 'Q'); }
             if (piece == 'k' && from == "e8" && to == "g8") { MovePiece("h8", "f8"); RemoveCastling('k', 'q'); }
@@ -3017,7 +3021,7 @@ namespace chessGUI
 
             _b[tr, tf] = piece;
 
-            // EP setzen (nur Doppelzug) – aber nur, wenn der Gegner auch wirklich ep schlagen kann
+            // set EP only, if the opponent can take it ep
             _ep = "-";
 
             if (piece == 'P' && fr == 6 && tr == 4)
@@ -3081,7 +3085,7 @@ namespace chessGUI
     {
         public static List<string> ExtractMainlineSan(string pgn)
         {
-            // 1) Tag-Pairs entfernen
+            // 1) Remove Tag Pairs
             var sb = new StringBuilder();
             using (var sr = new StringReader(pgn))
             {
@@ -3095,35 +3099,35 @@ namespace chessGUI
 
             string s = sb.ToString();
 
-            // 2) ; Kommentare bis EOL entfernen
+            // 2) Remove comments
             s = Regex.Replace(s, @";[^\r\n]*", " ");
 
-            // 3) { } Kommentare entfernen
+            // 3) Remove comments
             s = Regex.Replace(s, @"\{[^}]*\}", " ");
 
-            // 4) ( ) Varianten verschachtelt entfernen
+            // 4) 
             s = RemoveParenthesesBlocks(s);
 
-            // 5) NAGs $123 entfernen
+            // 5) Remove NAG $123
             s = Regex.Replace(s, @"\$\d+", " ");
 
-            // 6) Symbolische NAGs entfernen
+            // 6) Remove symbols
             s = Regex.Replace(s, @"(\!\?|\?\!|\!\!|\?\?|\!|\?)", " ");
 
-            // 7) Ergebnis-Tokens entfernen
+            // 7) Remove Result-Tokens
             s = Regex.Replace(s, @"\b(1-0|0-1|1/2-1/2|\*)\b", " ");
 
-            // 8) Move-Nummern entfernen (z.B. "1." oder "34..." )
+            // 8) Remove Move Numbers 
             s = Regex.Replace(s, @"\b\d+\.(\.\.)?\b", " ");
 
-            // 9) Tokenisieren
+            // 9) Tokenize
             var tokens = s.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
             var moves = new List<string>();
             foreach (var t in tokens)
             {
-                // SAN grob erkennen: Rochade oder enthält Buchstaben/Ziffern
-                // Die Ausführung/Validierung macht Gera.Chess beim Import.
+                // SAN rough recognition: castling or contains letters/numbers
+                // Gera.Chess performs the execution/validation during import.
                 if (t == "O-O" || t == "O-O-O" || Regex.IsMatch(t, @"^[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](=[QRBN])?[\+#]?$") || Regex.IsMatch(t, @"^[a-h]x?[a-h][1-8](=[QRBN])?[\+#]?$"))
                 {
                     moves.Add(t);
@@ -3160,8 +3164,8 @@ namespace chessGUI
         public static readonly Color TextPrimary = Color.FromArgb(225, 225, 225);
 
         public static readonly Color AccentEngine = Color.FromArgb(70, 130, 180);   // SteelBlue
-        public static readonly Color AccentAnalyse = Color.FromArgb(70, 160, 90);   // Grün
-        public static readonly Color Danger = Color.FromArgb(200, 70, 70);          // Rot
+        public static readonly Color AccentAnalyse = Color.FromArgb(70, 160, 90);   // Green
+        public static readonly Color Danger = Color.FromArgb(200, 70, 70);          // Red
 
         public static readonly Color Border = Color.FromArgb(90, 90, 90);
         public static readonly Color Separator = Color.FromArgb(55, 55, 55);
@@ -3209,7 +3213,7 @@ namespace chessGUI
 
         public FenInputDialog()
         {
-            Text = "FEN eingeben";
+            Text = "Enter FEN";
             Width = 900;
             Height = 220;
             MinimizeBox = false;
@@ -3226,7 +3230,7 @@ namespace chessGUI
             {
                 Dock = DockStyle.Top,
                 Height = 36,
-                Text = "FEN: placement side castling ep [halfmove fullmove]\n(4 Felder sind ok – werden zu '... 0 1' ergänzt)",
+                Text = "FEN:",
             };
 
             var panelButtons = new FlowLayoutPanel
@@ -3239,7 +3243,7 @@ namespace chessGUI
             };
 
             var ok = new System.Windows.Forms.Button { Text = "OK", DialogResult = DialogResult.OK, Width = 130, Height = 34, Margin = new Padding(8, 8, 0, 8) };
-            var cancel = new System.Windows.Forms.Button { Text = "Abbrechen", DialogResult = DialogResult.Cancel, Width = 130, Height = 34, Margin = new Padding(8, 8, 0, 8) };
+            var cancel = new System.Windows.Forms.Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 130, Height = 34, Margin = new Padding(8, 8, 0, 8) };
             ok.Anchor = AnchorStyles.Right;
             cancel.Anchor = AnchorStyles.Right;
 
@@ -3279,7 +3283,7 @@ namespace chessGUI
                 AutoSize = true,
                 Dock = DockStyle.Top,
                 TextAlign = ContentAlignment.MiddleCenter,
-                Text = "Wähle die Figur für die Umwandlung:"
+                Text = "Select the piece for promotion:"
             };
 
             var panel = new FlowLayoutPanel
