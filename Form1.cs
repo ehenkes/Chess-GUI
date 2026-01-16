@@ -477,21 +477,96 @@ namespace chessGUI
 
             _board.UciMoveDropped += async (_, uciMove) =>
             {
-                var ok = await TryApplyUserMoveViaEngineAsync(uciMove);
+                // Promotion? -> Dialog, dann 5-stelligen UCI bauen
+                string moveToSend = uciMove;
+
+                if (TryGetPromotionContext(_pos.ToFen(), uciMove, out bool isWhitePawn))
+                {
+                    using var dlg = new PromotionDialog(isWhitePawn);
+                    var dr = dlg.ShowDialog(this);
+                    if (dr != DialogResult.OK || dlg.SelectedPromo == '\0')
+                    {
+                        _board.ClearDropPreview();
+                        return;
+                    }
+
+                    // UCI: immer kleines Zeichen q/r/b/n
+                    moveToSend = uciMove + char.ToLowerInvariant(dlg.SelectedPromo);
+                }
+
+                var ok = await TryApplyUserMoveViaEngineAsync(moveToSend).ConfigureAwait(true);
                 if (!ok)
                 {
                     _board.ClearDropPreview();
-                    AppendAnalysisLine($"[GUI] illegal/abgelehnt: {uciMove}");
+                    AppendAnalysisLine($"[GUI] illegal/abgelehnt: {moveToSend}");
                     BeepIllegalMove();
                 }
             };
-
 
             _uiUnlocked = false;
             ApplyUiLockState();
             UpdateNavButtons();
         }
-        
+
+        private static bool TryGetPromotionContext(string fen, string uciMove4, out bool isWhitePawn)
+        {
+            isWhitePawn = true;
+
+            if (string.IsNullOrWhiteSpace(fen)) return false;
+            if (string.IsNullOrWhiteSpace(uciMove4) || uciMove4.Length != 4) return false;
+
+            string from = uciMove4.Substring(0, 2);
+            string to = uciMove4.Substring(2, 2);
+
+            char piece = GetPieceAtSquareFromFen(fen, from);
+            if (piece != 'P' && piece != 'p') return false;
+
+            // Zielreihe 8/1?
+            char toRank = to[1];
+            if (piece == 'P' && toRank != '8') return false;
+            if (piece == 'p' && toRank != '1') return false;
+
+            isWhitePawn = (piece == 'P');
+            return true;
+        }
+
+        private static char GetPieceAtSquareFromFen(string fen, string sq)
+        {
+            try
+            {
+                if (sq.Length != 2) return '\0';
+                int f = sq[0] - 'a';
+                int rank = sq[1] - '0';
+                if (f < 0 || f > 7 || rank < 1 || rank > 8) return '\0';
+
+                int r = 8 - rank; // r=0 ist Rank 8
+
+                var placement = fen.Split(' ')[0];
+                var ranks = placement.Split('/');
+                if (ranks.Length != 8) return '\0';
+
+                int file = 0;
+                foreach (var ch in ranks[r])
+                {
+                    if (char.IsDigit(ch))
+                    {
+                        file += (ch - '0');
+                    }
+                    else
+                    {
+                        if (file == f) return ch;
+                        file++;
+                    }
+                }
+                return '\0';
+            }
+            catch
+            {
+                return '\0';
+            }
+        }
+
+
 
         private void RefreshMovesUI()
         {
@@ -754,22 +829,7 @@ namespace chessGUI
                     await _engine.SendAsync("stop").ConfigureAwait(false);
                     LogTiming("StopSearch: SendAsync(stop)", t);
                 }
-
-                /*
-                // Quick wait auf bestmove
-                try
-                {
-                    var t = NowTicks();
-                    using var cts = new CancellationTokenSource(bestmoveTimeoutMs);
-                    await tcs.Task.WaitAsync(cts.Token).ConfigureAwait(false);
-                    LogTiming($"StopSearch: Wait bestmove ack ({bestmoveTimeoutMs}ms)", t);
-                }
-                catch
-                {
-                    FileLog.Write($"[PERF] StopSearch: bestmove ack TIMEOUT after {bestmoveTimeoutMs}ms");
-                }
-                */
-
+                
                 // Optional: kurz auf bestmove-ack warten. Bei <= 0 wird übersprungen.
                 if (bestmoveTimeoutMs > 0)
                 {
@@ -1474,37 +1534,66 @@ namespace chessGUI
                 string from = uciMove.Substring(0, 2);
                 string to = uciMove.Substring(2, 2);
 
-                var board = ChessBoard.LoadFromFen(prevFen);
-
-                // Promotion (optional)
-                Move move;
-                if (uciMove.Length == 5)
+                // 1) Erst über Gera.Chess versuchen (bevorzugt für EP/Castling/50-move etc.)
+                try
                 {
-                    char promo = uciMove[4]; // q r b n
+                    var board = ChessBoard.LoadFromFen(prevFen);
 
-                    // Manche Gera.Chess-Versionen haben Move(from,to,char), manche nicht.
-                    var ctor = typeof(Move).GetConstructor(new[] { typeof(string), typeof(string), typeof(char) });
-                    if (ctor == null) return false;
+                    Move move;
+                    if (uciMove.Length == 5)
+                    {
+                        char promoRaw = uciMove[4]; // q/r/b/n aus UCI
+                        char promoLower = char.ToLowerInvariant(promoRaw);
+                        char promoUpper = char.ToUpperInvariant(promoRaw);
 
-                    move = (Move)ctor.Invoke(new object[] { from, to, promo });
+                        // Manche Gera.Chess-Versionen nutzen (from,to,char), aber erwarten ggf. Q/R/B/N statt q/r/b/n.
+                        var ctor = typeof(Move).GetConstructor(new[] { typeof(string), typeof(string), typeof(char) });
+                        if (ctor == null)
+                            throw new InvalidOperationException("Move(from,to,char) ctor missing");
+
+                        // Versuch 1: lower
+                        try
+                        {
+                            move = (Move)ctor.Invoke(new object[] { from, to, promoLower });
+                            board.Move(move);
+                            nextFen = board.ToFen();
+                            return true;
+                        }
+                        catch
+                        {
+                            // Versuch 2: upper
+                            move = (Move)ctor.Invoke(new object[] { from, to, promoUpper });
+                            board.Move(move);
+                            nextFen = board.ToFen();
+                            return true;
+                        }
+                    }
+                    else
+                    {
+                        move = new Move(from, to);
+                        board.Move(move);
+                        nextFen = board.ToFen();
+                        return true;
+                    }
                 }
-                else
+                catch
                 {
-                    move = new Move(from, to);
+                    // 2) Fallback: interner FEN-Mover (reicht für Promotion absolut aus)
+                    var p = ChessPosition.FromFen(prevFen);
+                    if (!p.TryApplyUciMove(uciMove))
+                        return false;
+
+                    nextFen = p.ToFen();
+                    return true;
                 }
-
-                // Wir verlassen uns darauf, dass Gera.Chess hier illegalen Zug wirft -> false
-                board.Move(move);
-
-                nextFen = board.ToFen();
-                return true;
             }
             catch
             {
                 return false;
             }
         }
-                
+
+
         private void ApplyZoom()
         {
             // TrackBar 40..140 -> Brettgröße etwas kompakter (linear)
@@ -3166,4 +3255,105 @@ namespace chessGUI
         }
     }
 
+    public sealed class PromotionDialog : Form
+    {
+        public char SelectedPromo { get; private set; } = '\0';
+
+        public PromotionDialog(bool white)
+        {
+            Text = "Promotion";
+
+            AutoScaleMode = AutoScaleMode.Dpi;
+            AutoSize = true;
+            AutoSizeMode = AutoSizeMode.GrowAndShrink;
+
+            MinimizeBox = false;
+            MaximizeBox = false;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            StartPosition = FormStartPosition.CenterParent;
+
+            Padding = new Padding(12);
+
+            var info = new Label
+            {
+                AutoSize = true,
+                Dock = DockStyle.Top,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Text = "Wähle die Figur für die Umwandlung:"
+            };
+
+            var panel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Padding = new Padding(6),
+                Margin = new Padding(0)
+            };
+
+            panel.Controls.Add(MakeButton(white ? 'Q' : 'q', "Queen"));
+            panel.Controls.Add(MakeButton(white ? 'R' : 'r', "Rook"));
+            panel.Controls.Add(MakeButton(white ? 'B' : 'b', "Bishop"));
+            panel.Controls.Add(MakeButton(white ? 'N' : 'n', "Knight"));
+
+            var host = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 1,
+                RowCount = 2,
+                Padding = new Padding(0),
+                Margin = new Padding(0)
+            };
+            host.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            host.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            host.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+            host.Controls.Add(info, 0, 0);
+            host.Controls.Add(panel, 0, 1);
+
+            Controls.Add(host);
+
+            // Sicherheit: minimale Größe, damit nie unten abgeschnitten wird
+            MinimumSize = new Size(560, 220);
+        }
+
+
+        private WinFormsButton MakeButton(char promo, string text)
+        {
+            string uni = promo switch
+            {
+                'Q' => "♕",
+                'R' => "♖",
+                'B' => "♗",
+                'N' => "♘",
+                'q' => "♛",
+                'r' => "♜",
+                'b' => "♝",
+                'n' => "♞",
+                _ => "?"
+            };
+
+            var b = new WinFormsButton
+            {
+                Width = 110,
+                Height = 70,
+                Text = $"{uni}\n{text}",
+                Font = new Font("Segoe UI", 12f, FontStyle.Regular, GraphicsUnit.Point),
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+
+            b.Click += (_, __) =>
+            {
+                SelectedPromo = promo;
+                DialogResult = DialogResult.OK;
+                Close();
+            };
+
+            return b;
+        }
+    }
 }
