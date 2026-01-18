@@ -124,6 +124,12 @@ namespace chessGUI
             _board.Invalidate();
         }
 
+        // Bestmove-Pfeil: pro Depth bestes PV1 merken
+        private int _arrowDepth = -1;
+        private int? _arrowBestCp = null;
+        private int? _arrowBestMate = null;
+        private string? _arrowBestPvFirstMove = null;
+
 
         public Form1()
         {
@@ -315,9 +321,7 @@ namespace chessGUI
             bottomRow.Controls.Add(Sep()); 
             bottomRow.Controls.Add(_btnSelectEngine);
 
-
             
-
             // Style
             StyleButton(_btnFirst, null);
             StyleButton(_btnBack, null);
@@ -507,6 +511,30 @@ namespace chessGUI
             ApplyUiLockState();
             UpdateNavButtons();
         }
+
+        private static bool IsScoreBetterForArrow(int? mateA, int? cpA, int? mateB, int? cpB)
+        {
+            if (mateA.HasValue || mateB.HasValue)
+            {
+                if (mateA.HasValue && !mateB.HasValue) return true;
+                if (!mateA.HasValue && mateB.HasValue) return false;
+
+                int a = mateA!.Value;
+                int b = mateB!.Value;
+
+                if (a > 0 && b <= 0) return true;
+                if (a <= 0 && b > 0) return false;
+
+                if (a > 0 && b > 0) return a < b;   // mate in 1 besser als mate in 3
+                if (a < 0 && b < 0) return a < b;   // -3 besser als -1 (später verlieren)
+                return false; // gleich / nicht besser
+            }
+
+            int ca = cpA ?? int.MinValue;
+            int cb = cpB ?? int.MinValue;
+            return ca > cb;
+        }
+
 
         private static bool TryGetPromotionContext(string fen, string uciMove4, out bool isWhitePawn)
         {
@@ -1762,7 +1790,6 @@ namespace chessGUI
             }
         }
 
-
         private void HandleEngineLine(string line)
         {
             if (_suppressEngineUi)
@@ -1794,48 +1821,71 @@ namespace chessGUI
                 tcs?.TrySetResult(line);
             }
 
-            // 2) Info lines: parsing in the reader thread, UI only throttled
+            // 2) Info lines
             if (line.StartsWith("info ", StringComparison.Ordinal))
             {
                 var parsed = UciInfo.TryParse(line);
                 if (parsed == null) return;
 
-                // only PV1
-                if (parsed.MultiPv.HasValue && parsed.MultiPv.Value != 1) return;
-
-                long now = _uiThrottleSw.ElapsedMilliseconds;
-                if (now < _nextUiUpdateMs) return;
-                _nextUiUpdateMs = now + 200;
-
-                // Arrow only for new depth
-                if (parsed.Depth.HasValue && parsed.Depth.Value != _lastDepthForArrow)
+                // Arrow only during ongoing analysis
+                if (_analysisCts != null && !_analysisCts.IsCancellationRequested)
                 {
-                    _lastDepthForArrow = parsed.Depth.Value;
-
-                    if (!string.IsNullOrWhiteSpace(parsed.Pv))
+                    if (parsed.Depth.HasValue && !string.IsNullOrWhiteSpace(parsed.Pv))
                     {
-                        var first = parsed.Pv.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                        if (first.Length > 0 && first[0].Length >= 4)
-                        {
-                            // Arrow ONLY during analysis (legality check should not set an arrow)
-                            if (_analysisCts != null && !_analysisCts.IsCancellationRequested)
-                            {
-                                string mv = first[0];
-                                string from = mv.Substring(0, 2);
-                                string to = mv.Substring(2, 2);
+                        int d = parsed.Depth.Value;
 
-                                UI(() => _board.SetBestMoveArrow(from, to));
+                        // Bei neuer Depth Tracking zurücksetzen
+                        if (d != _arrowDepth)
+                        {
+                            _arrowDepth = d;
+                            _arrowBestCp = null;
+                            _arrowBestMate = null;
+                            _arrowBestPvFirstMove = null;
+                        }
+
+                        // Extract the first move of the PV
+                        var parts = parsed.Pv.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length > 0 && parts[0].Length >= 4)
+                        {
+                            string firstMove = parts[0];
+
+                            bool better =
+                                _arrowBestPvFirstMove == null ||
+                                IsScoreBetterForArrow(parsed.ScoreMate, parsed.ScoreCp, _arrowBestMate, _arrowBestCp);
+
+                            if (better)
+                            {
+                                _arrowBestMate = parsed.ScoreMate;
+                                _arrowBestCp = parsed.ScoreCp;
+                                _arrowBestPvFirstMove = firstMove;
+
+                                // UI throttle only for drawing
+                                long now = _uiThrottleSw.ElapsedMilliseconds;
+                                if (now >= _nextUiUpdateMs)
+                                {
+                                    _nextUiUpdateMs = now + 200;
+
+                                    string from = firstMove.Substring(0, 2);
+                                    string to = firstMove.Substring(2, 2);
+                                    UI(() => _board.SetBestMoveArrow(from, to));
+                                }
                             }
                         }
                     }
                 }
 
-                // Log only for new depth
+                // Log only for new depth (UI-throttled, independent of arrow tracking)
                 if (parsed.Depth.HasValue && parsed.Depth.Value != _lastDepthForLog)
                 {
-                    _lastDepthForLog = parsed.Depth.Value;
-                    var txt = parsed.ToDisplayString();
-                    UI(() => AppendAnalysisLine(txt));
+                    long now = _uiThrottleSw.ElapsedMilliseconds;
+                    if (now >= _nextUiUpdateMs)
+                    {
+                        _nextUiUpdateMs = now + 200;
+
+                        _lastDepthForLog = parsed.Depth.Value;
+                        var txt = parsed.ToDisplayString();
+                        UI(() => AppendAnalysisLine(txt));
+                    }
                 }
 
                 return;
@@ -1849,8 +1899,7 @@ namespace chessGUI
             }
         }
 
-
-        // ====== NEW: Legality check via UCI standard “searchmoves” ======
+        // Legality check via UCI standard “searchmoves” ======
         private async Task<bool> IsUciMoveLegalByEngineAsync(string prevFen, string uciMove)
         {
             if (_engine == null) return false;
