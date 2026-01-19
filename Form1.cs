@@ -92,7 +92,6 @@ namespace chessGUI
 
         private readonly Stopwatch _uiThrottleSw = Stopwatch.StartNew();
         private long _nextUiUpdateMs = 0;
-        private int _lastDepthForArrow = -1;
         private int _lastDepthForLog = -1;
 
         private readonly SemaphoreSlim _analysisUpdateLock = new SemaphoreSlim(1, 1);
@@ -130,6 +129,34 @@ namespace chessGUI
         private int? _arrowBestMate = null;
         private string? _arrowBestPvFirstMove = null;
 
+        private sealed class GameNode
+        {
+            public string Fen { get; }
+            public string? SanFromParent { get; }
+            public GameNode? Parent { get; }
+            public List<GameNode> Children { get; } = new List<GameNode>();
+
+            // The continuation the user last followed from this node (used for navigation)
+            public GameNode? PreferredChild { get; set; }
+
+            public GameNode(string fen, string? sanFromParent, GameNode? parent)
+            {
+                Fen = fen;
+                SanFromParent = sanFromParent;
+                Parent = parent;
+            }
+        }
+
+
+        // GameTree (Root = Startposition / aktuelle Basisposition)
+        private GameNode _rootNode;
+        private GameNode _currentNode;
+        // The currently shown line end (leaf). Navigation moves _currentNode inside this visible line.
+        private GameNode _lineLeafNode;
+
+
+        // Aktive Linie = Root -> ... -> Current (für UI/Navigation/Export)
+        private readonly List<GameNode> _activeLineNodes = new List<GameNode>();
 
         public Form1()
         {
@@ -164,13 +191,15 @@ namespace chessGUI
             _engineExePath = AppConfig.Load().EngineExePath;
 
             _pos = ChessPosition.FromFen(_currentFen);
-            _fenHistory.Clear();
-            _fenHistory.Add(_pos.ToFen());
-            _historyIndex = 0;
-            _moveHistory.Clear();
+
+            // Tree init
+            _rootNode = new GameNode(_pos.ToFen(), null, null);
+            _currentNode = _rootNode;
+            _lineLeafNode = _rootNode;
+            RebuildVisibleLine();
             RefreshMovesUI();
 
-            // Layout: links Brett+Zoom, rechts Analyse
+            // Layout: left board + zoom, right analysis
             _boardHost.Dock = DockStyle.Left;
             _boardHost.Width = 640;
             _boardHost.Padding = new Padding(12);
@@ -268,12 +297,12 @@ namespace chessGUI
             _btnExportPgn = new WinFormsButton { Text = "PGN Export", Width = 130, Height = 30, Margin = new Padding(0, 6, 8, 6) };
 
             _btnFlip = new WinFormsButton { Text = "Flip", Width = 90, Height = 30, Margin = new Padding(0, 6, 8, 6) };
-            
 
-            _btnFirst.Click += async (_, __) => await GoFirstAsync();
-            _btnBack.Click += async (_, __) => await GoBackAsync();
-            _btnForward.Click += async (_, __) => await GoForwardAsync();
-            _btnLast.Click += async (_, __) => await GoLastAsync();
+
+            _btnFirst.Click += async (_, __) => await NavGoFirstAsync();
+            _btnBack.Click += async (_, __) => await NavGoBackAsync();
+            _btnForward.Click += async (_, __) => await NavGoForwardAsync();
+            _btnLast.Click += async (_, __) => await NavGoLastAsync();
 
             _btnStart.Click += async (_, __) => await StartEngineAsync();
             _btnStop.Click += async (_, __) => await StopAnalysisOnlyAsync();
@@ -351,6 +380,10 @@ namespace chessGUI
             _boardHost.Controls.Add(_zoom);
 
             // Move list (below)
+            // Owner-draw so we can color individual move segments (white/black) per row
+            _moves.DrawMode = DrawMode.OwnerDrawFixed;
+            _moves.ItemHeight = TextRenderer.MeasureText("Mg", _moves.Font).Height + 4;
+            _moves.DrawItem += Moves_DrawItem;
             _moves.Dock = DockStyle.Fill;
             _moves.Font = new Font("Consolas", 11f, FontStyle.Bold);
             _moves.BackColor = Color.FromArgb(16, 16, 16);
@@ -413,6 +446,8 @@ namespace chessGUI
                 if (targetHistoryIndex == _historyIndex) return;
 
                 _historyIndex = targetHistoryIndex;
+                SyncCurrentNodeFromHistoryIndex();
+
                 _pos.LoadFen(_fenHistory[_historyIndex]);
                 _board.SetPosition(_pos);
 
@@ -511,6 +546,204 @@ namespace chessGUI
             ApplyUiLockState();
             UpdateNavButtons();
         }
+
+        private void SyncCurrentNodeFromHistoryIndex()
+        {
+            // Keep tree cursor in sync with what the UI/history shows
+            if (_activeLineNodes == null) return;
+            if (_activeLineNodes.Count == 0) return;
+
+            if (_historyIndex < 0) _historyIndex = 0;
+            if (_historyIndex >= _activeLineNodes.Count) _historyIndex = _activeLineNodes.Count - 1;
+
+            _currentNode = _activeLineNodes[_historyIndex];
+        }
+
+        private void Moves_DrawItem(object? sender, DrawItemEventArgs e)
+        {
+            if (e.Index < 0) return;
+
+            e.DrawBackground();
+
+            // Base colors (keep your current look)
+            Color baseText = _moves.ForeColor;
+            Color branchText = Color.Gold;
+
+            // Respect selection (Windows draws selection background via DrawBackground)
+            bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+            using var baseBrush = new SolidBrush(baseText);
+            using var branchBrush = new SolidBrush(branchText);
+
+            // Build row content from existing move history (do not change stored strings)
+            int i = e.Index * 2;                 // ply index in _moveHistory list (0-based)
+            int moveNo = e.Index + 1;
+
+            string w = (i < _moveHistory.Count) ? (_moveHistory[i] ?? "") : "";
+            string b = (i + 1 < _moveHistory.Count) ? (_moveHistory[i + 1] ?? "") : "";
+
+            // Determine branching at the node AFTER the move (parent move with >1 child)
+            // Node index mapping: root=0, ply 1 => node[1], ply 2 => node[2], ...
+            bool wBranches = false;
+            bool bBranches = false;
+
+            if (_activeLineNodes != null)
+            {
+                int wNodeIndex = (i + 1);        // white ply number (1-based) => node index
+                int bNodeIndex = (i + 2);        // black ply number (1-based) => node index
+
+                if (wNodeIndex >= 0 && wNodeIndex < _activeLineNodes.Count)
+                    wBranches = _activeLineNodes[wNodeIndex].Children.Count > 1;
+
+                if (!string.IsNullOrWhiteSpace(b) && bNodeIndex >= 0 && bNodeIndex < _activeLineNodes.Count)
+                    bBranches = _activeLineNodes[bNodeIndex].Children.Count > 1;
+            }
+
+            // Draw with fixed columns (monospace font)
+            // Format matches your RefreshMovesUI: $"{moveNo,2}. {w,-6} {b}"
+            string prefix = $"{moveNo,2}. ";
+            string wField = string.Format("{0,-6}", w);
+            string mid = " ";
+            string bField = b;
+
+            // Measure prefix + wField + mid widths to position segments
+            var font = e.Font ?? _moves.Font;
+            int x = e.Bounds.X + 6;
+            int y = e.Bounds.Y + 2;
+
+            Size prefixSz = TextRenderer.MeasureText(e.Graphics, prefix, font, Size.Empty, TextFormatFlags.NoPadding);
+            Size wSz = TextRenderer.MeasureText(e.Graphics, wField, font, Size.Empty, TextFormatFlags.NoPadding);
+            Size midSz = TextRenderer.MeasureText(e.Graphics, mid, font, Size.Empty, TextFormatFlags.NoPadding);
+
+            // Draw prefix
+            TextRenderer.DrawText(e.Graphics, prefix, font, new Point(x, y), baseText, TextFormatFlags.NoPadding);
+            x += prefixSz.Width;
+
+            // Draw white move (yellow only if branching)
+            TextRenderer.DrawText(
+                e.Graphics,
+                wField,
+                font,
+                new Point(x, y),
+                wBranches ? branchText : baseText,
+                TextFormatFlags.NoPadding);
+            x += wSz.Width;
+
+            // Draw space between
+            TextRenderer.DrawText(e.Graphics, mid, font, new Point(x, y), baseText, TextFormatFlags.NoPadding);
+            x += midSz.Width;
+
+            // Draw black move (yellow only if branching)
+            TextRenderer.DrawText(
+                e.Graphics,
+                bField,
+                font,
+                new Point(x, y),
+                bBranches ? branchText : baseText,
+                TextFormatFlags.NoPadding);
+
+            e.DrawFocusRectangle();
+        }
+
+
+
+        private void RebuildVisibleLine()
+        {
+            _activeLineNodes.Clear();
+
+            // Build visible line from root to the chosen leaf node
+            var stack = new Stack<GameNode>();
+            var n = _lineLeafNode;
+            while (n != null)
+            {
+                stack.Push(n);
+                n = n.Parent;
+            }
+            while (stack.Count > 0)
+                _activeLineNodes.Add(stack.Pop());
+
+            // Rebuild UI lists from the visible line (do NOT truncate when current node moves back)
+            _fenHistory.Clear();
+            _moveHistory.Clear();
+
+            for (int i = 0; i < _activeLineNodes.Count; i++)
+            {
+                _fenHistory.Add(_activeLineNodes[i].Fen);
+                if (i >= 1)
+                    _moveHistory.Add(_activeLineNodes[i].SanFromParent ?? "");
+            }
+
+            // Keep history index aligned with current node inside the visible line
+            int idx = _activeLineNodes.IndexOf(_currentNode);
+            if (idx < 0) idx = 0;
+            _historyIndex = idx;
+        }
+
+        private static GameNode GetLeafFollowingPreferred(GameNode start)
+        {
+            var n = start;
+            while (n.Children.Count > 0)
+            {
+                var next = n.PreferredChild;
+                if (next == null || !ReferenceEquals(next.Parent, n))
+                    next = n.Children[0];
+
+                n = next;
+            }
+            return n;
+        }
+
+        private static GameNode? ChooseChildDialog(IWin32Window owner, GameNode parent)
+        {
+            // If there is only one child, no dialog needed
+            if (parent.Children.Count == 0) return null;
+            if (parent.Children.Count == 1) return parent.Children[0];
+
+            using var dlg = new Form
+            {
+                Text = "Choose continuation",
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MinimizeBox = false,
+                MaximizeBox = false,
+                ShowInTaskbar = false,
+                Width = 360,
+                Height = 280
+            };
+
+            var list = new ListBox
+            {
+                Dock = DockStyle.Fill,
+                IntegralHeight = false
+            };
+
+            foreach (var ch in parent.Children)
+                list.Items.Add(ch.SanFromParent ?? "?");
+
+            list.SelectedIndex = 0;
+
+            var ok = new System.Windows.Forms.Button { Text = "OK", Dock = DockStyle.Right, Width = 90 };
+            var cancel = new System.Windows.Forms.Button { Text = "Cancel", Dock = DockStyle.Right, Width = 90 };
+
+            ok.DialogResult = DialogResult.OK;
+            cancel.DialogResult = DialogResult.Cancel;
+
+            var bottom = new Panel { Dock = DockStyle.Bottom, Height = 44, Padding = new Padding(8) };
+            bottom.Controls.Add(cancel);
+            bottom.Controls.Add(ok);
+
+            dlg.AcceptButton = ok;
+            dlg.CancelButton = cancel;
+
+            dlg.Controls.Add(list);
+            dlg.Controls.Add(bottom);
+
+            if (dlg.ShowDialog(owner) != DialogResult.OK) return null;
+
+            int idx = list.SelectedIndex;
+            if (idx < 0 || idx >= parent.Children.Count) return null;
+            return parent.Children[idx];
+        }
+
 
         private static bool IsScoreBetterForArrow(int? mateA, int? cpA, int? mateB, int? cpB)
         {
@@ -701,32 +934,148 @@ namespace chessGUI
             UpdateNavButtons();
         }
 
-        private async Task GoBackAsync()
+        private async Task NavGoBackAsync()
         {
+            // Move inside the currently visible line without rebuilding/truncating
             if (_historyIndex <= 0) return;
 
             _historyIndex--;
+            if (_historyIndex >= 0 && _historyIndex < _activeLineNodes.Count)
+                _currentNode = _activeLineNodes[_historyIndex];
+
             _pos.LoadFen(_fenHistory[_historyIndex]);
             _board.SetPosition(_pos);
+
+            _currentFen = _pos.ToFen();
+            RequestAnalysisUpdate(_currentFen);
+
             RefreshMovesUI();
             UpdateNavButtons();
-            RequestAnalysisUpdate(_pos.ToFen());
+
             await Task.CompletedTask;
         }
 
-        private async Task GoForwardAsync()
+        private async Task NavGoForwardAsync()
         {
-            if (_historyIndex >= _fenHistory.Count - 1) return;
+            // If the current node has multiple continuations, always ask which one to follow.
+            // This is the key to "getting back" to the main line after playing a side variation.
+            if (_currentNode != null && _currentNode.Children.Count > 1)
+            {
+                GameNode? chosen = ChooseChildDialog(this, _currentNode);
+                if (chosen == null) return;
 
-            _historyIndex++;
+                _currentNode.PreferredChild = chosen;
+
+                // Make the chosen continuation the visible line (root -> chosen leaf)
+                _currentNode = chosen;
+                _lineLeafNode = GetLeafFollowingPreferred(_currentNode);
+                RebuildVisibleLine();
+
+                // After rebuilding, align index with current node
+                int idxChosen = _activeLineNodes.IndexOf(_currentNode);
+                _historyIndex = (idxChosen >= 0) ? idxChosen : (_fenHistory.Count - 1);
+
+                _pos.LoadFen(_fenHistory[_historyIndex]);
+                _board.SetPosition(_pos);
+
+                _currentFen = _pos.ToFen();
+                RequestAnalysisUpdate(_currentFen);
+
+                RefreshMovesUI();
+                UpdateNavButtons();
+
+                await Task.CompletedTask;
+                return;
+            }
+
+            // Normal forward inside the currently visible line
+            if (_historyIndex < _fenHistory.Count - 1)
+            {
+                _historyIndex++;
+                if (_historyIndex >= 0 && _historyIndex < _activeLineNodes.Count)
+                    _currentNode = _activeLineNodes[_historyIndex];
+
+                _pos.LoadFen(_fenHistory[_historyIndex]);
+                _board.SetPosition(_pos);
+
+                _currentFen = _pos.ToFen();
+                RequestAnalysisUpdate(_currentFen);
+
+                RefreshMovesUI();
+                UpdateNavButtons();
+
+                await Task.CompletedTask;
+                return;
+            }
+
+            // End of visible line: if there are continuations, ask
+            if (_currentNode == null || _currentNode.Children.Count == 0) return;
+
+            GameNode? chosenEnd = ChooseChildDialog(this, _currentNode);
+            if (chosenEnd == null) return;
+
+            _currentNode.PreferredChild = chosenEnd;
+
+            _currentNode = chosenEnd;
+            _lineLeafNode = GetLeafFollowingPreferred(_currentNode);
+            RebuildVisibleLine();
+
+            int idxEnd = _activeLineNodes.IndexOf(_currentNode);
+            _historyIndex = (idxEnd >= 0) ? idxEnd : (_fenHistory.Count - 1);
+
             _pos.LoadFen(_fenHistory[_historyIndex]);
             _board.SetPosition(_pos);
+
+            _currentFen = _pos.ToFen();
+            RequestAnalysisUpdate(_currentFen);
+
             RefreshMovesUI();
             UpdateNavButtons();
-            RequestAnalysisUpdate(_pos.ToFen());
-            await Task.CompletedTask;
 
+            await Task.CompletedTask;
         }
+
+
+        private async Task NavGoFirstAsync()
+        {
+            if (_fenHistory.Count == 0) return;
+
+            _historyIndex = 0;
+            _currentNode = (_activeLineNodes.Count > 0) ? _activeLineNodes[0] : _currentNode;
+
+            _pos.LoadFen(_fenHistory[_historyIndex]);
+            _board.SetPosition(_pos);
+
+            _currentFen = _pos.ToFen();
+            RequestAnalysisUpdate(_currentFen);
+
+            RefreshMovesUI();
+            UpdateNavButtons();
+
+            await Task.CompletedTask;
+        }
+
+        private async Task NavGoLastAsync()
+        {
+            if (_fenHistory.Count == 0) return;
+
+            _historyIndex = _fenHistory.Count - 1;
+            _currentNode = (_activeLineNodes.Count > 0) ? _activeLineNodes[_activeLineNodes.Count - 1] : _currentNode;
+
+            _pos.LoadFen(_fenHistory[_historyIndex]);
+            _board.SetPosition(_pos);
+
+            _currentFen = _pos.ToFen();
+            RequestAnalysisUpdate(_currentFen);
+
+            RefreshMovesUI();
+            UpdateNavButtons();
+
+            await Task.CompletedTask;
+        }
+
+
+
 
         private async Task ApplyEngineOptionsAsync()
         {
@@ -925,13 +1274,13 @@ namespace chessGUI
 
             bool wasAnalysisRunning = (_analysisCts != null);
 
-            // Stop analysis cleanly (don't just send “stop”)
+            // Stop analysis cleanly (do not leave the engine in "searching" state)
             if (wasAnalysisRunning)
                 await StopAnalysisOnlyAsync().ConfigureAwait(false);
 
             using var ofd = new OpenFileDialog
             {
-                Title = "Import PGN Datei importieren (main line)",
+                Title = "Import PGN (main line)",
                 Filter = "PGN (*.pgn)|*.pgn|All Files (*.*)|*.*",
                 CheckFileExists = true,
                 Multiselect = false
@@ -942,35 +1291,29 @@ namespace chessGUI
 
             string pgn = File.ReadAllText(ofd.FileName, Encoding.UTF8);
 
-            // Hauptlinie extrahieren (Kommentare/Varianten raus)
+            // Extract main line only (remove variations/comments)
             List<string> sanMoves = PgnMainlineExtractor.ExtractMainlineSan(pgn);
 
             if (sanMoves.Count == 0)
             {
-                MessageBox.Show("No moves found in the PGN (after removing variations/comments).",
-                    "PGN Import", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(
+                    "No moves found in the PGN (after removing variations/comments).",
+                    "PGN Import",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
                 return;
             }
 
-            // stop analysis
-            if (_engine != null && _analysisCts != null)
-                await _engine.SendAsync("stop").ConfigureAwait(false);
-
-            // Everything back to start (history empty)
+            // Reset to a clean new game state (board/UI/history/engine integration)
             await NewGameAsync().ConfigureAwait(false);
 
-            // Gera.Chess: Run SAN + collect FEN after every half move :contentReference[oaicite:2]{index=2}
-            var board = new ChessBoard(); // Startpos
+            // Use Gera.Chess to execute SAN and get FEN after each ply
+            var board = new ChessBoard(); // start position
+            string startFen = board.ToFen();
 
-            // We are rebuilding History from scratch (starting position + n half moves).
-            _fenHistory.Clear();
-            _moveHistory.Clear();
-            _historyIndex = 0;
-
-            // Start FEN from Gera.Chess -> import into our model
-            string startFen = board.ToFen(); // Available according to Gera.Chess documentation: contentReference[oaicite:3]{index=3}
-            _pos.LoadFen(startFen);
-            _fenHistory.Add(_pos.ToFen());
+            // Build a new game tree: root + main line as Children[0] chain
+            _rootNode = new GameNode(startFen, null, null);
+            var cursor = _rootNode;
 
             int importedPlies = 0;
 
@@ -978,38 +1321,50 @@ namespace chessGUI
             {
                 try
                 {
-                    board.Move(san); // Execute SAN :contentReference[oaicite:4]{index=4}
+                    board.Move(san);
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"PGN Import abgebrochen bei Zug:\n{san}\n\n{ex.Message}",
-                        "PGN Import", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(
+                        $"PGN import stopped at move:\n{san}\n\n{ex.Message}",
+                        "PGN Import",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
                     break;
                 }
 
                 string fen = board.ToFen();
-                _pos.LoadFen(fen);
 
-                _moveHistory.Add(san);      // Display: SAN (matches PGN)
-                _fenHistory.Add(_pos.ToFen());
-                _historyIndex = _fenHistory.Count - 1;
+                var child = new GameNode(fen, san, cursor);
+                cursor.Children.Add(child);   // main line = first child
+                cursor = child;
+
                 importedPlies++;
             }
 
+            // Current node becomes the end of the imported main line
+            _currentNode = cursor;
+            _lineLeafNode = _currentNode;
+
+            // Apply position to our model + board control
+            _pos.LoadFen(_currentNode.Fen);
             _board.SetPosition(_pos);
+
+            // Rebuild active line lists for existing UI (moves/history)
+            RebuildVisibleLine();
             RefreshMovesUI();
             UpdateNavButtons();
 
             AppendAnalysisLine($"[GUI] PGN imported: {importedPlies} plies (main line).");
 
-            await StartEngineAsync().ConfigureAwait(false);          // If not already started
-            await ApplyEngineOptionsAsync().ConfigureAwait(false);   // Set options securely
+            await StartEngineAsync().ConfigureAwait(false);
+            await ApplyEngineOptionsAsync().ConfigureAwait(false);
 
-            // Only restart the analysis if it was running previously
+            // Restart analysis only if it was running before import
             if (wasAnalysisRunning)
                 await StartAnalysisAsync().ConfigureAwait(false);
-
         }
+
 
         private void ExportPgn()
         {
@@ -1094,7 +1449,9 @@ namespace chessGUI
 
             _autoplayRunning = true;
             _autoplayCts = new CancellationTokenSource();
-            await GoToStartAsync(); // Always start with move 1
+
+            // Always start at the beginning of the currently visible line
+            await NavGoFirstAsync().ConfigureAwait(true);
 
             FileLog.Write($"Autoplay START: historyIndex={_historyIndex} / last={(_fenHistory.Count - 1)}");
 
@@ -1103,7 +1460,8 @@ namespace chessGUI
 
             try
             {
-                await StartAnalysisAsync(); // UI-Thread
+                // Start analysis on UI thread
+                await StartAnalysisAsync().ConfigureAwait(true);
 
                 var frames = new List<byte[]>();
 
@@ -1114,12 +1472,13 @@ namespace chessGUI
                 {
                     _autoplayCts.Token.ThrowIfCancellationRequested();
 
-                    await GoForwardAsync(); // UI-safe
+                    // Step forward using the new navigation (no list truncation)
+                    await NavGoForwardAsync().ConfigureAwait(true);
 
-                    // After stepping forward, capture the frame.
+                    // After stepping forward, capture the frame
                     frames.Add(CaptureBoardPngBytes());
 
-                    await Task.Delay(FrameMs, _autoplayCts.Token);
+                    await Task.Delay(FrameMs, _autoplayCts.Token).ConfigureAwait(true);
                 }
 
                 UI(() => AppendAnalysisLine("[GUI] Autoplay complete (end position)."));
@@ -1130,10 +1489,10 @@ namespace chessGUI
                     // Encoding deliberately not on UI thread
                     string path = _gifOutputPath;
                     await Task.Run(async () => await SaveGifAsync(frames, path, FrameMs).ConfigureAwait(false)).ConfigureAwait(false);
+
                     UI(() => AppendAnalysisLine($"[GUI] GIF saved: {_gifOutputPath}"));
                     FileLog.Write($"GIF: saved {path}");
                 }
-
             }
             catch (OperationCanceledException)
             {
@@ -1158,7 +1517,6 @@ namespace chessGUI
         }
 
 
-
         private void StopAutoplay()
         {
             _autoplayCts?.Cancel();
@@ -1169,32 +1527,7 @@ namespace chessGUI
             if (IsDisposed) return;
             if (InvokeRequired) BeginInvoke(a);
             else a();
-        }
-
-        private Task GoToStartAsync()
-        {
-            var tcs = new TaskCompletionSource();
-
-            UI(() =>
-            {
-                try
-                {
-                    _historyIndex = 0;
-                    _pos.LoadFen(_fenHistory[0]);
-                    _board.SetPosition(_pos);
-                    UpdateNavButtons();
-                    RequestAnalysisUpdate(_pos.ToFen()); // blockiert nicht
-                    tcs.SetResult();
-                }
-                catch (Exception ex)
-                {
-                    tcs.SetException(ex);
-                }
-            });
-
-            return tcs.Task;
-        }
-
+        }        
 
         private bool TrySelectGifOutputPath()
         {
@@ -1295,13 +1628,12 @@ namespace chessGUI
 
             _pos = ChessPosition.FromFen(StartFen);
 
-            _fenHistory.Clear();
-            _fenHistory.Add(_pos.ToFen());
-            _historyIndex = 0;
-            _moveHistory.Clear();
+            // Tree init
+            _rootNode = new GameNode(_pos.ToFen(), null, null);
+            _currentNode = _rootNode;
+            _lineLeafNode = _currentNode;
+            RebuildVisibleLine();
             RefreshMovesUI();
-
-            _board.SetPosition(_pos);
 
             _analysis.Clear();
             AppendAnalysisLine("[GUI] New Game.");
@@ -1413,39 +1745,9 @@ namespace chessGUI
             // If analysis is running: restart immediately (coalesce mechanism will handle this cleanly) :contentReference[oaicite:7]{index=7}
             await RestartAnalysisIfRunningAsync().ConfigureAwait(false);
         }
-                
 
-        private async Task GoFirstAsync()
-        {
-            if (_historyIndex <= 0) return;
 
-            _historyIndex = 0;
-            _pos.LoadFen(_fenHistory[_historyIndex]);
-            _board.SetPosition(_pos);
-
-            _currentFen = _pos.ToFen();
-            RequestAnalysisUpdate(_currentFen);
-
-            RefreshMovesUI();
-            UpdateNavButtons();
-            await Task.CompletedTask;
-        }
-
-        private async Task GoLastAsync()
-        {
-            if (_historyIndex >= _fenHistory.Count - 1) return;
-
-            _historyIndex = _fenHistory.Count - 1;
-            _pos.LoadFen(_fenHistory[_historyIndex]);
-            _board.SetPosition(_pos);
-
-            _currentFen = _pos.ToFen();
-            RequestAnalysisUpdate(_currentFen);
-
-            RefreshMovesUI();
-            UpdateNavButtons();
-            await Task.CompletedTask;
-        }
+        
 
         private async Task<bool> TryApplyUserMoveViaEngineAsync(string uciMove)
         {
@@ -1515,27 +1817,44 @@ namespace chessGUI
                 _currentFen = _pos.ToFen();
             }
 
-            // History update
+            // Tree update (instead of history trimming)
             {
                 var t = NowTicks();
 
-                if (_historyIndex < _fenHistory.Count - 1)
-                {
-                    _fenHistory.RemoveRange(_historyIndex + 1, _fenHistory.Count - (_historyIndex + 1));
+                string san = UciToSanOrUciFallback(prevFenForSan, uciMove);
 
-                    int keepPlies = _historyIndex;
-                    if (_moveHistory.Count > keepPlies)
-                        _moveHistory.RemoveRange(keepPlies, _moveHistory.Count - keepPlies);
+                var parent = _currentNode;
+
+                // If the same SAN already exists as a child, reuse it
+                GameNode? next = null;
+                foreach (var ch in parent.Children)
+                {
+                    if (string.Equals(ch.SanFromParent, san, StringComparison.Ordinal))
+                    {
+                        next = ch;
+                        break;
+                    }
                 }
 
-                _fenHistory.Add(_pos.ToFen());
-                _historyIndex = _fenHistory.Count - 1;
+                if (next == null)
+                {
+                    next = new GameNode(_pos.ToFen(), san, parent);
+                    parent.Children.Add(next);
+                }
 
-                string san = UciToSanOrUciFallback(prevFenForSan, uciMove);
-                _moveHistory.Add(san);
+                // Switch to the new node
+                _currentNode = next;
 
-                LogTiming("History+SAN", t);
+                // The user just chose this continuation from the parent
+                parent.PreferredChild = next;
+
+                // Make this new line the visible one (leaf = end of preferred line)
+                _lineLeafNode = GetLeafFollowingPreferred(_currentNode);
+                RebuildVisibleLine();
+
+                LogTiming("History(Tree)+SAN", t);
             }
+
 
             // UI update
             {
