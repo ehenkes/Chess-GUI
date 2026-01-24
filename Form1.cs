@@ -1620,40 +1620,50 @@ namespace chessGUI
         {
             StopAutoplay();
 
-            // stop analysis (if running)
+            // Stop analysis cleanly (if running) so no background update overwrites the reset.
             if (_engine != null && _analysisCts != null)
-                await _engine.SendAsync("stop").ConfigureAwait(false);
+                await _engine.SendAsync("stop");
 
+            // Reset model state to start position.
             _currentFen = StartFen;
-
             _pos = ChessPosition.FromFen(StartFen);
 
-            // Tree init
+            // Reset game tree to a single root node (start position).
             _rootNode = new GameNode(_pos.ToFen(), null, null);
             _currentNode = _rootNode;
             _lineLeafNode = _currentNode;
+
             RebuildVisibleLine();
             RefreshMovesUI();
+
+            // IMPORTANT: Push the new position into the board control immediately.
+            // Without this, the board keeps showing the last position even though moves/history were cleared.
+            _board.SetPosition(_pos);
+            _board.Invalidate(); // Force repaint right now (demo-safe).
 
             _analysis.Clear();
             AppendAnalysisLine("[GUI] New Game.");
 
-            // send position startpos
+            // Sync engine to start position (does not update GUI board by itself).
             if (_engine != null)
             {
-                await _engine.SendAsync("setoption name MultiPV value 3").ConfigureAwait(false);
-                await _engine.SendAsync("setoption name Threads value 7").ConfigureAwait(false);
-                await _engine.SendAsync("setoption name Hash value 1600").ConfigureAwait(false);
-                await _engine.SendAsync("isready").ConfigureAwait(false);
-                await _engine.WaitForAsync("readyok", TimeSpan.FromSeconds(3)).ConfigureAwait(false);
-                await _engine.SendAsync("position startpos").ConfigureAwait(false);
+                await _engine.SendAsync("setoption name MultiPV value 3");
+                await _engine.SendAsync("setoption name Threads value 7");
+                await _engine.SendAsync("setoption name Hash value 1600");
+                await _engine.SendAsync("isready");
+                await _engine.WaitForAsync("readyok", TimeSpan.FromSeconds(3));
+                await _engine.SendAsync("position startpos");
             }
 
             UpdateNavButtons();
 
-            await RestartAnalysisIfRunningAsync().ConfigureAwait(false);
+            // Clear any stale arrow from the previous game.
             _board.SetBestMoveArrow(null, null);
+
+            // If analysis is running, restart it on the new start position.
+            await RestartAnalysisIfRunningAsync();
         }
+
 
         private async Task SetPositionFromFenDialogAsync()
         {
@@ -1710,9 +1720,10 @@ namespace chessGUI
 
         private async Task LoadFenAsNewGameAsync(string fen)
         {
-            // Stop analysis (if running)
+            // Stop analysis (if running). Do NOT use ConfigureAwait(false) in UI code.
+            // We must continue on the WinForms UI thread after await.
             if (_engine != null && _analysisCts != null)
-                await _engine.SendAsync("stop").ConfigureAwait(false);
+                await _engine.SendAsync("stop");
 
             _currentFen = fen;
 
@@ -2451,8 +2462,127 @@ namespace chessGUI
             _onLine = onLine;
         }
 
+        public static bool AskShowConsole(IWin32Window? owner = null)
+        {
+            using var f = new Form
+            {
+                Text = "Engine Startup",
+                StartPosition = owner != null ? FormStartPosition.CenterParent : FormStartPosition.CenterScreen,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false,
+                ShowInTaskbar = false,
+                Font = new Font("Segoe UI", 10f),
+                AutoScaleMode = AutoScaleMode.Dpi,
+                Padding = new Padding(18),
+            };
+
+            // Optional: kleines Info-Icon links (systemnah)
+            var icon = new PictureBox
+            {
+                Image = SystemIcons.Information.ToBitmap(),
+                SizeMode = PictureBoxSizeMode.AutoSize,
+                Margin = new Padding(0, 2, 14, 0)
+            };
+
+            var title = new Label
+            {
+                AutoSize = true,
+                Text = "Start Engine (Stockfish) with a debug console window?",
+                Font = new Font("Segoe UI Semibold", 10f),
+                Margin = new Padding(0, 0, 0, 6)
+            };
+
+            var subtitle = new Label
+            {
+                AutoSize = true,
+                MaximumSize = new Size(520, 0),
+                Text = "Choose “Show Console” if you want to see internal diagnostics in a separate console window.\n" +
+                       "Choose “Start Without Console” for normal operation.",
+                ForeColor = SystemColors.GrayText,
+                Margin = new Padding(0, 0, 0, 0)
+            };
+
+            var btnConsole = new System.Windows.Forms.Button
+            {
+                Text = "Show Console",
+                DialogResult = DialogResult.Yes,
+                AutoSize = true,
+                MinimumSize = new Size(140, 34),
+                Margin = new Padding(0, 0, 10, 0),
+                UseVisualStyleBackColor = true
+            };
+
+            var btnNoConsole = new System.Windows.Forms.Button
+            {
+                Text = "Start Without Console",
+                DialogResult = DialogResult.No,
+                AutoSize = true,
+                MinimumSize = new Size(140, 34),
+                Margin = new Padding(0),
+                UseVisualStyleBackColor = true
+            };
+
+            // Layout: oben Content (Icon + Text), unten Buttons rechts
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 2,
+                AutoSize = true
+            };
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+            var textPanel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 2,
+                AutoSize = true,
+                Margin = new Padding(0)
+            };
+            textPanel.Controls.Add(title, 0, 0);
+            textPanel.Controls.Add(subtitle, 0, 1);
+
+            root.Controls.Add(icon, 0, 0);
+            root.Controls.Add(textPanel, 1, 0);
+
+            var buttons = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.RightToLeft,
+                AutoSize = true,
+                WrapContents = false,
+                Margin = new Padding(0, 16, 0, 0)
+            };
+            // Right-to-left: erst No, dann Yes hinzufügen, damit Yes links steht
+            buttons.Controls.Add(btnNoConsole);
+            buttons.Controls.Add(btnConsole);
+
+            root.SetColumnSpan(buttons, 2);
+            root.Controls.Add(buttons, 0, 1);
+
+            f.Controls.Add(root);
+
+            f.AcceptButton = btnNoConsole;   // Enter = No Console
+            f.CancelButton = btnNoConsole;   // Esc   = No Console
+
+            // Sehr wichtig: Größe sauber packen
+            f.AutoSize = true;
+            f.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+
+            var result = (owner != null ? f.ShowDialog(owner) : f.ShowDialog());
+            return result == DialogResult.Yes;
+        }
+
         public Task StartAsync()
         {
+            var showConsole = AskShowConsole();
+
             _p = new Process
             {
                 StartInfo = new ProcessStartInfo
@@ -2460,13 +2590,13 @@ namespace chessGUI
                     FileName = _exePath,
                     WorkingDirectory = Path.GetDirectoryName(_exePath) ?? Environment.CurrentDirectory,
                     UseShellExecute = false,
-                    CreateNoWindow = true,
+                    CreateNoWindow = !showConsole,
                     RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
-                    StandardOutputEncoding = Encoding.UTF8
+                    StandardOutputEncoding = Encoding.UTF8,
+                    StandardErrorEncoding = Encoding.UTF8
                 },
-
                 EnableRaisingEvents = true
             };
 
@@ -2491,12 +2621,30 @@ namespace chessGUI
                 }
                 catch
                 {
-                    // bewusst minimal
+                    
+                }
+            });
+                        
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    while (!_p.HasExited)
+                    {
+                        var line = _p.StandardError.ReadLine();
+                        if (line == null) break;
+                        _onLine("[stderr] " + line);
+                    }
+                }
+                catch
+                {
+                    
                 }
             });
 
             return Task.CompletedTask;
         }
+
 
         public async Task SendAsync(string cmd)
         {
